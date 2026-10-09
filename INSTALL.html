@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI-BRAIN - Installation</title>
+<style>
+:root{--paper:#F4F6F8;--sheet:#fff;--ink:#1C2B45;--ink-2:#4A5A73;--rule:#D3DAE3;--accent:#2E7D78;--warn:#C08A2B;--bad:#A2493A;
+  --sans:"Segoe UI Variable","Segoe UI",system-ui,-apple-system,sans-serif;--mono:"Cascadia Code",Consolas,ui-monospace,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--paper:#141B26;--sheet:#1B2432;--ink:#E4E9F0;--ink-2:#9AA8BC;--rule:#2C384A}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 var(--sans)}
+main{max-width:920px;margin:0 auto;padding:32px 16px 80px}
+h1{font-size:2rem;line-height:1.2;margin:0 0 .3rem}
+h2{margin:2.4rem 0 .6rem;font-size:1.35rem;border-bottom:1px solid var(--rule);padding-bottom:.3rem}
+h3{margin:1.6rem 0 .4rem;font-size:1.08rem}
+.lede{color:var(--ink-2);margin:0 0 1.5rem}
+code,pre{font-family:var(--mono);font-size:14px}
+pre{background:var(--sheet);border:1px solid var(--rule);border-radius:6px;padding:12px 14px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+:not(pre)>code{background:var(--sheet);border:1px solid var(--rule);border-radius:4px;padding:0 4px}
+table{border-collapse:collapse;width:100%;background:var(--sheet);border:1px solid var(--rule);margin:.6rem 0}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--rule);vertical-align:top}
+th{color:var(--ink-2);font-weight:600;font-size:14px}
+.tabs{display:flex;gap:6px;margin:1rem 0 0;position:sticky;top:0;background:var(--paper);padding:8px 0;z-index:2}
+.tabs button{font:inherit;padding:8px 18px;border:1px solid var(--rule);background:var(--sheet);color:var(--ink);border-radius:6px;cursor:pointer}
+.tabs button.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+body.os-linux .win,body.os-win .lin{display:none}
+.note{border-left:4px solid var(--accent);background:var(--sheet);padding:10px 14px;border-radius:4px;margin:1rem 0}
+.note.warn{border-color:var(--warn)} .note.bad{border-color:var(--bad)}
+ol.steps>li{margin:.7rem 0}
+.toc{columns:2;gap:2rem;background:var(--sheet);border:1px solid var(--rule);border-radius:6px;padding:12px 28px}
+.toc a{color:var(--ink)}
+.check{list-style:none;padding-left:0} .check li::before{content:"☐ ";color:var(--accent)}
+@media (max-width:640px){.toc{columns:1}}
+</style>
+</head>
+<body class="os-win">
+<main>
+<h1>AI-BRAIN - installation guide</h1>
+<p class="lede">From an empty server to a running code graph, code vectors, document graph, search, ask, enhance and
+requirements writer, on <b>Windows</b> or <b>Linux</b>, without internet access. Follow the steps in order; every
+command can be copied as it is.</p>
+
+<div class="tabs" role="tablist" aria-label="Operating system">
+  <button class="on" data-os="win" role="tab" aria-selected="true">Windows</button>
+  <button data-os="linux" role="tab" aria-selected="false">Linux</button>
+</div>
+
+<nav class="toc" aria-label="Contents"><ol>
+<li><a href="#need">What you need</a></li><li><a href="#bundle">Nothing to download</a></li>
+<li><a href="#copy">Copy the folder</a></li><li><a href="#setup">Run setup</a></li>
+<li><a href="#env">Fill in the configuration</a></li><li><a href="#doctor">Check</a></li>
+<li><a href="#start">Start</a></li><li><a href="#repos">Add repositories and sets</a></li>
+<li><a href="#docs">Add documents</a></li><li><a href="#hooks">Connect the webhooks</a></li>
+<li><a href="#agents">Connect AI agents</a></li><li><a href="#service">Run permanently</a></li>
+<li><a href="#https">HTTPS (optional)</a></li><li><a href="#trouble">Troubleshooting</a></li>
+<li><a href="#done">Final checklist</a></li></ol></nav>
+
+<h2 id="need">1. What you need</h2>
+<table>
+<tr><th>Item</th><th class="win">Windows</th><th class="lin">Linux</th></tr>
+<tr><td>Operating system</td><td class="win">Windows 10/11 or Windows Server 2019+, 64-bit</td><td class="lin">x86-64 with glibc 2.17+ (RHEL/Rocky 8+, Ubuntu 20.04+, Debian 11+)</td></tr>
+<tr><td>Python</td><td class="win"><b>3.13</b> from python.org; tick <i>Add python.exe to PATH</i></td><td class="lin"><b><code>python3.13</code></b> and the <code>python3.13-venv</code> package</td></tr>
+<tr><td>git</td><td class="win">Git for Windows</td><td class="lin">the <code>git</code> package</td></tr>
+<tr><td>Hardware</td><td colspan="2">4 CPU cores, 8 GB RAM (16 GB for large monorepos), 10 GB disk plus 3× the size of the source code</td></tr>
+<tr><td>Corporate API</td><td colspan="2">an OpenAI-compatible base URL ending in <code>/v1</code>, an API key, a chat model, a multilingual embedding model and its vector size (bge-m3 = 1024). Optional: a vision model.</td></tr>
+<tr><td>Network</td><td colspan="2">inbound TCP 8765 (configurable) from users, agents and the git servers; outbound only to the corporate API and the git servers</td></tr>
+</table>
+
+<h2 id="bundle">2. Nothing to download</h2>
+<p>The folder contains <b>every Python package</b> for Python 3.13 on Windows and Linux (<code>wheels/</code>, about 225 MB),
+the code engine for both systems (<code>bin/</code>), the tokenizer files LightRAG needs (<code>vendor/</code>) and the UI's graph
+library. Setup installs with <code>pip --no-index</code>, so <b>no internet access is needed</b> at any step.</p>
+
+<h2 id="copy">3. Copy the folder to the server</h2>
+<p class="win">For example to <code>D:\AI-BRAIN</code>. Do not use a folder that OneDrive or another sync tool manages.</p>
+<p class="lin">For example to <code>/opt/ai-brain</code>, owned by the account that will run the server.</p>
+
+<h2 id="setup">4. Run setup</h2>
+<div class="win">
+<ol class="steps">
+<li>Open PowerShell in the folder (File Explorer → Shift + right-click → <i>Open PowerShell window here</i>).</li>
+<li><pre>powershell -ExecutionPolicy Bypass -File .\setup.ps1</pre></li>
+<li>Setup, in this order: finds Python 3.13 and warns if git is missing → creates <code>.venv</code> (recreates it if it was
+built with another Python) → installs every package from <code>wheels\</code> → checks the SHA-256 of the code engine against
+<code>bin\SHA256SUMS</code> and unpacks it → creates <code>.env</code> with a random API token and cookie key and opens it in Notepad
+(step 5) → creates an empty <code>repos.json</code> → runs <code>brain doctor</code> → offers a firewall rule and a start-at-logon task.</li>
+<li>Unattended: <code>.\setup.ps1 -NonInteractive -Firewall -Autostart</code>. A specific interpreter: <code>-Python C:\Python313\python.exe</code>.</li>
+<li>Setup can be run again at any time; it keeps <code>.env</code>, <code>repos.json</code> and <code>data\</code>.</li>
+</ol></div>
+<div class="lin">
+<ol class="steps">
+<li><pre>cd /opt/ai-brain
+chmod +x setup.sh brain.sh
+./setup.sh</pre></li>
+<li>The same steps as on Windows; <code>.env</code> and <code>repos.json</code> get mode 600, <code>.env</code> opens in <code>$EDITOR</code>
+(default <code>vi</code>), and setup offers a systemd user service instead of a scheduled task.</li>
+<li>Unattended: <code>./setup.sh --non-interactive --autostart</code>. A specific interpreter: <code>--python /usr/bin/python3.13</code>.</li>
+<li>Setup can be run again at any time; it keeps <code>.env</code>, <code>repos.json</code> and <code>data/</code>.</li>
+</ol></div>
+
+<h2 id="env">5. Fill in the configuration (<code>.env</code>)</h2>
+<p>Only these six values are required; everything else has a default and can be changed later in the web UI
+(<b>Settings</b>, and <b>Repositories</b> for git servers and webhooks).</p>
+<table>
+<tr><th>Key</th><th>Example</th><th>Meaning</th></tr>
+<tr><td><code>BRAIN_UI_PASSWORD</code></td><td>a strong password</td><td>login for the UI (user <code>BRAIN_UI_USER</code>, default <code>admin</code>)</td></tr>
+<tr><td><code>BRAIN_LLM_BASE_URL</code></td><td><code>https://llm-gateway.corp.local/v1</code></td><td>the corporate OpenAI-compatible API</td></tr>
+<tr><td><code>BRAIN_LLM_API_KEY</code></td><td><code>sk-…</code></td><td>its key</td></tr>
+<tr><td><code>BRAIN_LLM_MODEL</code></td><td><code>qwen3-32b</code></td><td>default chat model for ask, enhance, the requirements writer and document extraction</td></tr>
+<tr><td><code>BRAIN_EMBEDDING_MODEL</code></td><td><code>bge-m3</code></td><td>multilingual embedding model for documents, code vectors and re-ranking</td></tr>
+<tr><td><code>BRAIN_EMBEDDING_DIM</code></td><td><code>1024</code></td><td>its vector size (<code>brain doctor</code> prints the real one)</td></tr>
+</table>
+<p>Often useful: <code>BRAIN_PUBLIC_URL</code> (the address shown to users and in webhook URLs), <code>BRAIN_VLM_MODEL</code> (vision model for
+pictures and scanned pages), <code>BRAIN_CA_BUNDLE</code> (internal CA certificate of the API), <code>BRAIN_GITLAB_URL</code> +
+<code>BRAIN_GITLAB_TOKEN</code> and <code>BRAIN_TFS_URL</code> + <code>BRAIN_TFS_TOKEN</code> (the corporate git servers and read tokens;
+repositories can then be written as <code>gitlab:group/project</code> and <code>tfs:Project/repo</code>), <code>BRAIN_GIT_CA_BUNDLE</code>
+(internal CA of the git servers), <code>LIGHTRAG_SUMMARY_LANGUAGE=Turkish</code> (language of the entity descriptions). Every
+setting with its meaning: <code>docs/03-CONFIGURATION.md</code>.</p>
+
+<h2 id="doctor">6. Check</h2>
+<pre class="win">.\brain.cmd doctor</pre><pre class="lin">./brain.sh doctor</pre>
+<p>Every line must say <b>PASS</b> (WARN lines are hints). Typical fixes:</p>
+<table>
+<tr><th>Message</th><th>Fix</th></tr>
+<tr><td>corporate chat / embedding endpoint FAIL</td><td>URL (must end in <code>/v1</code>), key, model names, proxy, <code>BRAIN_CA_BUNDLE</code></td></tr>
+<tr><td>dim=768 (BRAIN_EMBEDDING_DIM=1024)</td><td>set <code>BRAIN_EMBEDDING_DIM</code> to the printed number</td></tr>
+<tr><td>code engine runs FAIL</td><td>antivirus quarantine (a known false positive): allow-list <code>bin\windows\codebase-memory-mcp.exe</code> by the SHA-256 in <code>bin\SHA256SUMS</code></td></tr>
+<tr><td>python package … FAIL</td><td>run setup again</td></tr>
+<tr><td>BRAIN_UI_PASSWORD FAIL</td><td>set a password (required unless <code>BRAIN_HOST=127.0.0.1</code>)</td></tr>
+</table>
+
+<h2 id="start">7. Start</h2>
+<pre class="win">.\brain.cmd serve</pre><pre class="lin">./brain.sh serve</pre>
+<p>The console prints <code>READY: code graph, document graph and the agents (ask, enhance, requirements) are up</code> when
+everything is ready, usually within a minute; the first index of large repositories continues in the background. Open
+<code>http://&lt;server&gt;:8765</code> from any machine and log in. The <b>Overview</b> page shows every component, every job with its
+progress, and any error with its log.</p>
+<div class="note warn">The server refuses to listen on a network address while <code>BRAIN_UI_PASSWORD</code> is empty.</div>
+
+<h2 id="repos">8. Add repositories and sets</h2>
+<ol class="steps">
+<li>UI → <b>Repositories</b> → <i>Add or edit repositories</i> → <b>Add repository</b>.</li>
+<li>Per repository: a <b>name</b>; the <b>provider</b> (empty = detected); either a git <b>URL</b> (<code>gitlab:group/project</code>,
+<code>tfs:Project/repo</code> or a full URL; the server clones it and follows the branch) or a local <b>path</b> on the server; the
+<b>branch</b> to follow (default <code>main</code>); an <b>own token</b> only if this repository needs other credentials than its server.</li>
+<li><i>Repository sets</i>: <b>Add set</b>, name it (for example <code>payments</code>) and tick its repositories.</li>
+<li><b>Save repositories and sets</b>, then <b>Update all now</b>. Progress appears on Overview and Repositories; the first
+index of 10,000 files takes a few minutes, later updates take seconds.</li>
+</ol>
+<p>Or edit <code>repos.json</code> directly (see <code>repos.example.json</code>). Search, Ask, Enhance and Requirements can then target one
+repository or a whole set.</p>
+
+<h2 id="docs">9. Add documents</h2>
+<p>UI → <b>Documents</b> → drop files (PDF, Word, PowerPoint, Excel, HTML, CSV, Markdown, text, source code, images) or add a
+note. Every document is converted to Markdown first (<b>Markdown</b> shows the result). Status moves
+<i>pending → processing → processed</i>; failures show their reason. <b>Remove</b> deletes a document.</p>
+
+<h2 id="hooks">10. Connect the webhooks</h2>
+<p>Each repository on the <b>Repositories</b> page shows its own webhook with <b>Copy URL</b>, <b>Copy secret</b> and the setup steps.</p>
+<h3>GitLab</h3>
+<ol class="steps">
+<li>GitLab → project → <b>Settings → Webhooks → Add new webhook</b>: URL = the copied URL
+(<code>http://&lt;server&gt;:8765/webhooks/repo/&lt;name&gt;</code>), Secret token = the copied secret, triggers <b>Merge request events</b>
+and <b>Push events</b> (branch filter: the tracked branch).</li>
+<li>Self-managed GitLab: allow <i>requests to the local network from webhooks and integrations</i> (Admin → Settings → Network →
+Outbound requests).</li>
+<li>Press <b>Test → Push events</b>; 202 (accepted) or 200 (ignored) is good.</li>
+</ol>
+<h3>TFS / Azure DevOps Server</h3>
+<ol class="steps">
+<li>Project settings → <b>Service hooks</b> → <b>Web Hooks</b>: trigger <i>Pull request merge attempted</i> (target branch = the tracked
+branch), and optionally a second hook <i>Code pushed</i>; URL = the copied URL; basic authentication with any user name and the copied
+secret as password; resource details: <b>All</b>.</li>
+<li>Press <b>Test</b>; 200 or 202 is good.</li>
+</ol>
+<p>Every delivery and its result is listed under Repositories → <i>Webhook deliveries</i>. One hook for many repositories is also
+possible (group-level hooks), and without webhooks <code>BRAIN_SYNC_INTERVAL_MINUTES=10</code> updates periodically; see
+<code>docs/09-WEBHOOKS.md</code>.</p>
+
+<h2 id="agents">11. Connect AI agents</h2>
+<pre class="win">.\brain.cmd connect</pre><pre class="lin">./brain.sh connect</pre>
+<p>prints ready-to-paste configuration with your URL and token. In short:</p>
+<pre># Claude Code
+claude mcp add --transport http --scope user brain http://&lt;server&gt;:8765/mcp --header "Authorization: Bearer &lt;BRAIN_API_TOKEN&gt;"
+
+# opencode: ~/.config/opencode/opencode.json
+{"mcp": {"brain": {"type": "remote", "url": "http://&lt;server&gt;:8765/mcp", "enabled": true, "oauth": false,
+                "headers": {"Authorization": "Bearer &lt;BRAIN_API_TOKEN&gt;"}}}}
+
+# pi and other agents: REST (put integrations/AGENTS.brain.md into AGENTS.md)
+curl -H "Authorization: Bearer &lt;BRAIN_API_TOKEN&gt;" -H "Content-Type: application/json" -d '{"query":"..."}' http://&lt;server&gt;:8765/api/search</pre>
+<p>Optional: copy <code>integrations/claude-code/brain-enhance.md</code> to <code>~/.claude/commands/</code> for a <code>/brain-enhance</code> command, and
+append <code>integrations/AGENTS.brain.md</code> to <code>CLAUDE.md</code> / <code>AGENTS.md</code> so agents use AI-BRAIN instead of grep, glob and read.</p>
+
+<h2 id="service">12. Run permanently</h2>
+<div class="win">
+<p>Setup's <i>Autostart</i> creates the scheduled task <code>AI-BRAIN</code> (at logon). For a Windows service that runs without anyone
+logged on, use a service wrapper such as NSSM from your software repository:</p>
+<pre>nssm install AI-BRAIN "D:\AI-BRAIN\.venv\Scripts\python.exe" "D:\AI-BRAIN\brain.py" serve
+nssm set AI-BRAIN AppDirectory D:\AI-BRAIN
+nssm start AI-BRAIN</pre>
+<p>Firewall, if setup did not add it: <code>New-NetFirewallRule -DisplayName "AI-BRAIN" -Direction Inbound -LocalPort 8765 -Protocol TCP -Action Allow</code></p>
+</div>
+<div class="lin">
+<pre>./setup.sh --autostart            # or answer "y" during setup
+systemctl --user status ai-brain
+journalctl --user -u ai-brain -f
+sudo loginctl enable-linger $USER  # start at boot without a login
+sudo firewall-cmd --add-port=8765/tcp --permanent &amp;&amp; sudo firewall-cmd --reload   # if firewalld is used</pre>
+</div>
+
+<h2 id="https">13. HTTPS (optional)</h2>
+<p>Set <code>BRAIN_TLS_CERT</code> and <code>BRAIN_TLS_KEY</code> to PEM files (certificate chain and private key) and restart; then use
+<code>https://</code> in webhooks and agent configuration. Alternatively put a TLS reverse proxy in front and set <code>BRAIN_HOST=127.0.0.1</code>.</p>
+
+<h2 id="trouble">14. Troubleshooting</h2>
+<table>
+<tr><th>Symptom</th><th>What to do</th></tr>
+<tr><td>Overview: document graph <i>error</i></td><td>read the log tail on the card; usual causes: wrong model or key, wrong embedding size, port <code>LIGHTRAG_PORT</code> in use</td></tr>
+<tr><td>Documents end as <i>failed</i></td><td>read the error in the table; "VLM … not available" → fix or clear <code>BRAIN_VLM_MODEL</code>; timeouts → raise <code>LIGHTRAG_LLM_TIMEOUT</code> (or <code>LIGHTRAG_EMBEDDING_TIMEOUT</code>), lower <code>LIGHTRAG_MAX_ASYNC</code></td></tr>
+<tr><td>Repository sync fails</td><td>the job error on Overview; check <code>BRAIN_GITLAB_URL</code> / <code>BRAIN_TFS_URL</code> and their tokens (or <code>BRAIN_GIT_TOKEN</code>, or the repository's own token); TLS: <code>BRAIN_GIT_CA_BUNDLE</code></td></tr>
+<tr><td>Webhook answers 401, 404 or 503</td><td>401: copy the secret again; 404: wrong repository name in the URL; 503: save the repository first</td></tr>
+<tr><td>Ask or enhance notes "tool calling not supported"</td><td>a harmless automatic fallback; or set <code>BRAIN_AGENT_TOOL_CALLING=off</code></td></tr>
+<tr><td>Colleagues cannot open the UI</td><td>a firewall rule for the port; <code>BRAIN_HOST=0.0.0.0</code></td></tr>
+<tr><td>Logs</td><td>UI → Logs, or <code>data/logs/server.log</code>, <code>lightrag.log</code>, <code>codebase-memory.log</code></td></tr>
+</table>
+<p>More: <code>docs/13-OPERATIONS.md</code>, <code>docs/09-WEBHOOKS.md</code>, <code>docs/10-BRANCH-DRIFT.md</code>.</p>
+
+<h2 id="done">15. Final checklist</h2>
+<ul class="check">
+<li><code>brain doctor</code> shows only PASS and WARN</li>
+<li>Overview: all four cards (Code graph, Document graph, Corporate API, Agents) are <i>ready</i></li>
+<li>Repositories: every repository indexed, with a commit and code vectors</li>
+<li>Documents: a test document is <i>processed</i>; Search finds code and documents with all source chips filled</li>
+<li>Ask answers a question with sources; Enhance produces a prompt; Requirements writes a specification</li>
+<li>Each repository's webhook test answers 200 or 202; a merge into the tracked branch shows up in Search</li>
+<li>An agent lists the <code>brain</code> MCP tools</li>
+<li>Autostart and firewall configured; <code>data/</code>, <code>.env</code> and <code>repos.json</code> included in backups</li>
+</ul>
+</main>
+<script>
+document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll(".tabs button").forEach((x) => { x.classList.toggle("on", x === b); x.setAttribute("aria-selected", x === b) })
+  document.body.className = "os-" + b.dataset.os
+}))
+if (/Linux|X11/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent)) document.querySelector('[data-os="linux"]').click()
+</script>
+</body>
+</html>

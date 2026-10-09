@@ -1,0 +1,10 @@
+# AI-BRAIN - Python dependencies (Python 3.13; all wheels are bundled in wheels/). Installed by setup.ps1 / setup.sh.
+# Document graph: LightRAG server. Its [api] extra also brings FastAPI, uvicorn, httpx, python-multipart,
+# numpy, tiktoken, python-docx, python-pptx and openpyxl, which this server reuses (nothing else to install).
+lightrag-hku[api]==1.5.7
+# Rich documents -> Markdown + images (.textpack) for LightRAG's native multimodal parser. No ML models.
+pdfplumber>=0.11
+pypdfium2>=4.30
+python-pptx>=1.0
+openpyxl>=3.1
+# Code graph: codebase-memory-mcp is a native binary shipped in bin/ (no Python package).

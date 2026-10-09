@@ -1,0 +1,15 @@
+{
+  "repos": [
+    {"name": "billing", "provider": "gitlab", "url": "gitlab:payments/billing", "branch": "main"},
+    {"name": "web-portal", "provider": "tfs", "url": "tfs:Portal/web-portal", "branch": "main"},
+    {"name": "legacy-api", "provider": "git", "url": "https://git.other-team.corp.local/legacy/api.git",
+     "user": "svc-brain", "token": "<this repository's own read token>"},
+    {"name": "shared-lib", "provider": "local", "path": "D:/src/shared-lib", "branch": "main",
+     "aliases": ["corp/shared-lib"]}
+  ],
+  "sets": {
+    "payments": ["billing", "web-portal", "shared-lib"],
+    "backend": ["billing", "legacy-api", "shared-lib"],
+    "frontend": ["web-portal"]
+  }
+}

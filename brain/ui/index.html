@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI-BRAIN</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='9' cy='10' r='5' fill='%23C08A2B'/><circle cx='23' cy='9' r='4' fill='%232E7D78'/><circle cx='17' cy='23' r='6' fill='%23764A8C'/><path d='M9 10L23 9L17 23Z' fill='none' stroke='%231C2B45' stroke-width='1.5'/></svg>">
+<link rel="stylesheet" href="/ui/style.css">
+<script src="/ui/vendor/force-graph.min.js"></script>
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <form id="login-form" class="panel login-card">
+    <h1>AI-BRAIN</h1>
+    <p class="muted">Sign in with the user name and password from the server configuration.</p>
+    <label>User name<input id="login-user" autocomplete="username" required></label>
+    <label>Password<input id="login-pass" type="password" autocomplete="current-password" required></label>
+    <button type="submit">Sign in</button>
+    <p id="login-err" class="err" role="alert"></p>
+  </form>
+</div>
+
+<nav class="rail" aria-label="Sections" hidden>
+  <div class="brand"><svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><circle cx="9" cy="10" r="5" fill="#C08A2B"/><circle cx="23" cy="9" r="4" fill="#2E7D78"/><circle cx="17" cy="23" r="6" fill="#764A8C"/><path d="M9 10L23 9L17 23Z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span>AI-BRAIN</span></div>
+  <button data-view="overview" class="on">Overview</button>
+  <div class="rail-h">Use</div>
+  <button data-view="search" title="Code graph + code vectors + documents, no model call">Search</button>
+  <button data-view="ask" title="A grounded answer with sources">Ask</button>
+  <button data-view="enhance" title="An implementation-ready prompt for a coding agent">Enhance prompt</button>
+  <button data-view="srs" title="Software Requirements Specification in plain language">Requirements</button>
+  <div class="rail-h">Explore</div>
+  <button data-view="code">Code graph</button>
+  <button data-view="docgraph">Document graph</button>
+  <button data-view="documents">Documents</button>
+  <div class="rail-h">Manage</div>
+  <button data-view="repos">Repositories</button>
+  <button data-view="settings">Settings</button>
+  <button data-view="logs">Logs</button>
+  <div class="rail-foot"><span id="health" class="dot"></span><span id="health-text">connecting</span>
+    <button id="logout" class="ghost small" title="Sign out">Sign out</button></div>
+</nav>
+
+<main hidden>
+  <!-- ======================================================= overview -->
+  <section id="overview" class="view on">
+    <header class="page-head"><h1>Overview</h1><p class="lede" id="ov-lede">Loading status…</p></header>
+    <div id="ov-alerts"></div>
+    <div class="cards" id="ov-cards"></div>
+    <h2 class="sub">Activity</h2>
+    <div id="ov-jobs" class="jobs"></div>
+    <h2 class="sub">Connect an AI agent</h2>
+    <p class="muted">MCP endpoint <code id="ov-mcp"></code>, authenticated with <code>Authorization: Bearer &lt;BRAIN_API_TOKEN&gt;</code>.</p>
+    <pre class="code" id="ov-connect"></pre>
+  </section>
+
+  <!-- ======================================================= search -->
+  <section id="search" class="view">
+    <header class="page-head"><h1>Search</h1><p class="lede">Every search combines three sources: the code graph (symbols, calls, inheritance), the code vector indexes (code by meaning, also across Turkish and English) and the document graph (business rules, entities, passages). No language-model call.</p></header>
+    <div class="box">
+      <input id="s-q" type="search" placeholder="e.g. where is VAT applied to invoices / fatura KDV" autocomplete="off" class="grow">
+      <div class="row">
+        <div class="seg" id="s-scope"><button data-v="all" class="on">All</button><button data-v="code">Code</button><button data-v="semantic" title="Code by meaning only (vector search)">Semantic code</button><button data-v="docs">Documents</button></div>
+        <label class="inl">Scope <select class="scope-select" id="s-target" title="One repository, or a set: then every repository of the set is searched"></select></label>
+        <label class="inl">Branch <input id="s-branch" placeholder="main" size="14"></label>
+        <span class="spacer"></span><button id="s-go">Search</button>
+      </div>
+    </div>
+    <div id="s-an" class="analysis" aria-live="polite"></div>
+    <div id="s-meta" class="muted"></div>
+    <div id="s-out"></div>
+  </section>
+
+  <!-- ======================================================= ask -->
+  <section id="ask" class="view">
+    <header class="page-head"><h1>Ask</h1><p class="lede">An agent searches code and documents, follows calls and rules, and answers with sources. Any language.</p></header>
+    <div class="box">
+      <textarea id="a-q" rows="3" placeholder="e.g. How is a customer charged, and what happens when the bank returns 503?"></textarea>
+      <div class="row">
+        <label class="inl">Scope <select class="scope-select" id="a-target" title="One repository, or a set: then every repository of the set is searched"></select></label>
+        <label class="inl">Model <select class="model-select" id="a-model" data-role="ask"></select></label>
+        <label class="inl">Branch <input id="a-branch" placeholder="main" size="14"></label>
+        <span class="spacer"></span><button id="a-go">Ask</button>
+      </div>
+    </div>
+    <div id="a-an" class="analysis" aria-live="polite"></div>
+    <div id="a-progress"></div>
+    <article id="a-out" class="md"></article>
+    <div id="a-meta"></div>
+    <div id="a-ev"></div>
+  </section>
+
+  <!-- ======================================================= enhance -->
+  <section id="enhance" class="view">
+    <header class="page-head"><h1>Enhance a prompt</h1><p class="lede">Turn a short request into an implementation-ready prompt for Claude Code, opencode, pi or any coding agent.</p></header>
+    <div class="box">
+      <textarea id="e-q" rows="3" placeholder="e.g. add partial refunds to billing"></textarea>
+      <div class="row">
+        <label class="inl">Scope <select class="scope-select" id="e-target" title="One repository, or a set: then every repository of the set is searched"></select></label>
+        <label class="inl">Model <select class="model-select" id="e-model" data-role="enhance"></select></label>
+        <label class="inl">Your branch <input id="e-branch" placeholder="main" size="16"></label>
+        <span class="spacer"></span><button id="e-go">Enhance</button>
+      </div>
+      <details class="adv"><summary>Branch details (optional, adds drift warnings)</summary>
+        <div class="row"><label class="inl">Repository <select id="e-repo"></select></label>
+          <label class="inl">Merge-base commit <input id="e-base" size="14" placeholder="git merge-base HEAD origin/main"></label></div>
+        <label>Changed files (one per line)<textarea id="e-files" rows="3"></textarea></label>
+      </details>
+    </div>
+    <div id="e-an" class="analysis" aria-live="polite"></div>
+    <div id="e-progress"></div>
+    <div id="e-actions" class="row" hidden><button id="e-copy" class="ghost">Copy prompt</button></div>
+    <article id="e-out" class="md"></article>
+    <div id="e-meta"></div>
+    <div id="e-ev"></div>
+  </section>
+
+  <!-- ======================================================= requirements writer -->
+  <section id="srs" class="view">
+    <header class="page-head"><h1>Requirements writer</h1><p class="lede">Writes a Software Requirements Specification from the code and the documents, in plain language that anyone can read, following the format you choose.</p></header>
+    <div class="box">
+      <label>What should be specified?<input id="r-topic" placeholder="e.g. the whole billing system / refunds / müşteri iade süreci"></label>
+      <div class="row">
+        <label class="inl">Scope <select class="scope-select" id="q-target" title="One repository, or a set: then every repository of the set is searched"></select></label>
+        <label class="inl">Format <select id="q-template"></select></label>
+        <label class="inl">Language <select id="q-lang"><option value="auto">Same as the request</option><option>English</option><option>Turkish</option></select></label>
+        <label class="inl">Model <select class="model-select" id="q-model" data-role="srs"></select></label>
+        <span class="spacer"></span><button id="q-go">Write specification</button>
+      </div>
+      <details class="adv" id="q-tpl-box"><summary>Edit formats</summary>
+        <p class="muted">A format is Markdown: <code>## </code> starts a section; the <code>&gt; </code> lines under a heading tell the writer what to put there;
+          <code>[per capability]</code> writes that section once per feature area; placeholders <code>{{title}} {{date}} {{scope}} {{language}}</code>.</p>
+        <div class="row"><label class="inl">Name <input id="q-tpl-name" size="22"></label>
+          <button id="q-tpl-load" class="ghost">Load selected</button><button id="q-tpl-new" class="ghost">New from default</button>
+          <button id="q-tpl-save">Save format</button><button id="q-tpl-del" class="del">Delete</button></div>
+        <textarea id="q-tpl-text" rows="16" spellcheck="false" class="mono"></textarea>
+      </details>
+    </div>
+    <div id="q-progress"></div>
+    <div id="q-actions" class="row" hidden><button id="q-copy" class="ghost">Copy Markdown</button><button id="q-download" class="ghost">Download .md</button>
+      <button id="q-publish" class="ghost">Add to document graph</button><span id="q-note" class="muted"></span></div>
+    <article id="q-out" class="md wide"></article>
+    <div id="q-ev"></div>
+    <h2 class="sub">Written specifications</h2>
+    <table class="tbl"><thead><tr><th>Title</th><th>Scope</th><th>Format</th><th>Written</th><th></th></tr></thead><tbody id="q-docs"></tbody></table>
+  </section>
+
+  <!-- ======================================================= code graph -->
+  <section id="code" class="view stage">
+    <div class="toolbar">
+      <select id="code-project" aria-label="Project"></select>
+      <input id="code-q" type="search" placeholder="Find a class, function, method…" autocomplete="off" aria-label="Find symbol">
+      <div id="code-sugg" class="sugg" hidden></div>
+      <button id="code-overview" class="ghost">Architecture view</button>
+      <span class="legend" id="code-legend"></span>
+    </div>
+    <div id="code-msg" class="stage-msg" hidden></div>
+    <div id="code-canvas" class="canvas"></div>
+    <aside id="code-inspector" class="inspector" hidden></aside>
+  </section>
+
+  <!-- ======================================================= document graph -->
+  <section id="docgraph" class="view stage">
+    <div class="toolbar">
+      <input id="doc-q" type="search" placeholder="Entity (empty = whole graph)" list="doc-labels" autocomplete="off">
+      <datalist id="doc-labels"></datalist>
+      <button id="doc-go" class="ghost">Show</button>
+      <span class="legend" id="doc-legend"></span>
+    </div>
+    <div id="doc-msg" class="stage-msg" hidden></div>
+    <div id="doc-canvas" class="canvas"></div>
+    <aside id="doc-inspector" class="inspector" hidden></aside>
+  </section>
+
+  <!-- ======================================================= documents -->
+  <section id="documents" class="view">
+    <header class="page-head"><h1>Documents</h1><p class="lede">PDF, Word, PowerPoint, Excel, HTML, CSV, Markdown, text, source code and images. Every document is converted to Markdown first (open it with <b>Markdown</b>); tables keep their structure and pictures are read by the vision model when one is configured.</p></header>
+    <label class="drop" id="drop" tabindex="0"><input type="file" id="files" multiple hidden>
+      <strong>Drop files here</strong> or click to choose</label>
+    <details class="note"><summary>Add a note instead</summary>
+      <input id="note-name" placeholder="Title, e.g. decision-2026-10-payment-retries.md">
+      <textarea id="note-text" rows="5" placeholder="Text…"></textarea>
+      <button id="note-add">Add note</button></details>
+    <div id="pipe" class="pipe"></div>
+    <table class="tbl"><thead><tr><th>Document</th><th>Status</th><th>Chunks</th><th>Updated</th><th></th></tr></thead><tbody id="doc-rows"></tbody></table>
+  </section>
+
+  <!-- ======================================================= repositories -->
+  <section id="repos" class="view">
+    <header class="page-head"><h1>Repositories</h1><p class="lede">Each repository is followed on its tracked branch and has its own webhook. Group repositories into sets: a question about a set looks at all of its codebases.</p></header>
+    <div class="row"><button id="r-sync-all">Update all now</button><span class="muted" id="r-file"></span></div>
+    <div id="r-list"></div>
+
+    <h2 class="sub">Add or edit repositories</h2>
+    <p class="muted">Git <b>URL</b> (the server clones and follows it): <code>gitlab:group/project</code>, <code>tfs:Project/repo</code> (servers below) or a full URL; or a local <b>path</b> on the server.
+      Provider decides the webhook format (auto-detected when empty). A token is only needed when this repository needs other credentials than its server's.</p>
+    <table class="tbl edit"><thead><tr><th>Name</th><th>Provider</th><th>Git URL</th><th>Local path</th><th>Branch</th><th>Own token (optional)</th><th></th></tr></thead><tbody id="r-edit"></tbody></table>
+    <div class="row"><button id="r-add" class="ghost">Add repository</button><button id="r-save">Save repositories and sets</button></div>
+
+    <h2 class="sub">Repository sets</h2>
+    <p class="muted">Tick the repositories of each set. Search, Ask, Enhance and the Requirements writer can then target one repository or a whole set.</p>
+    <div id="set-edit"></div>
+    <div class="row"><button id="set-add" class="ghost">Add set</button><button id="set-save2">Save repositories and sets</button></div>
+
+    <h2 class="sub">Git servers, updates and webhooks</h2>
+    <div id="repo-settings"></div>
+    <div class="row"><button id="repo-set-save">Save these settings</button><span id="repo-set-msg" class="muted"></span></div>
+
+    <h2 class="sub">Is my branch behind the knowledge base?</h2>
+    <div class="box">
+      <div class="row"><label class="inl">Repository <select id="d-repo"></select></label>
+        <label class="inl">Branch <input id="d-branch" size="18" placeholder="feature/x"></label>
+        <label class="inl">Merge-base <input id="d-base" size="14" placeholder="optional"></label>
+        <span class="spacer"></span><button id="d-go">Check</button></div>
+      <label>Changed files (optional, one per line)<textarea id="d-files" rows="2"></textarea></label>
+    </div>
+    <article id="d-out" class="md"></article>
+    <h2 class="sub">Webhook deliveries</h2>
+    <div id="w-info"></div>
+  </section>
+
+  <!-- ======================================================= settings -->
+  <section id="settings" class="view">
+    <header class="page-head"><h1>Settings</h1><p class="lede" id="set-lede">Every value is stored in the configuration file and applied right away. Engines restart by themselves when needed.</p></header>
+    <div id="set-groups"></div>
+    <div class="row sticky"><button id="set-save">Save changes</button><span id="set-msg" class="muted"></span></div>
+  </section>
+
+  <!-- ======================================================= logs -->
+  <section id="logs" class="view">
+    <header class="page-head"><h1>Logs</h1></header>
+    <div class="row"><div class="seg" id="log-pick"><button data-v="server" class="on">Server</button><button data-v="lightrag">Document engine</button><button data-v="code">Code engine</button></div>
+      <button id="log-refresh" class="ghost">Refresh</button></div>
+    <pre class="code log" id="log-out"></pre>
+  </section>
+</main>
+<dialog id="viewer"><div class="row"><b id="viewer-title"></b><span class="spacer"></span><button id="viewer-close" class="ghost small">Close</button></div>
+  <article id="viewer-body" class="md"></article></dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="/ui/app.js"></script>
+</body>
+</html>

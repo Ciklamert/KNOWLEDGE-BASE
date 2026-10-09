@@ -1,0 +1,8 @@
+.env
+repos.json
+.venv/
+data/
+bin/windows/
+bin/linux/
+__pycache__/
+*.pyc
