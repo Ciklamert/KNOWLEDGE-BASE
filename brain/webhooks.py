@@ -1,5 +1,6 @@
 """GitLab and TFS / Azure DevOps Server webhooks: a merge into a repository's tracked branch (main) updates
-that repository's code graph (fetch + incremental index), debounced per repository.
+that repository's code graph at once (pull + incremental index); an event that arrives while the repository is
+being updated makes that update run once more.
 
 Every repository has its OWN webhook: POST /webhooks/repo/<name> with its own secret (repos.json
 "webhook_secret", generated when the repository is saved; shown on the Repositories page). GitLab or TFS is
@@ -76,7 +77,7 @@ def _accept(source: str, r: dict, event: str, ref: str) -> tuple[int, dict]:
         return _result(source, 200, {"ignored": f"{event} on {ref}, tracked branch is {r['branch']}", "repo": r["name"]})
     job = repos.request_sync(r["name"], reason=f"webhook {source} {event}")
     return _result(source, 202, {"accepted": True, "repo": r["name"], "event": event,
-                                 "job": job.id if job else None, "debounced": job is None})
+                                 "job": job.id if job else None, "queued": job is None})
 
 
 def _gitlab_event(r: dict, headers: dict, payload: dict, source: str) -> tuple[int, dict]:

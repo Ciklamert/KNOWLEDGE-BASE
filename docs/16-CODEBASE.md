@@ -7,7 +7,8 @@ No framework beyond FastAPI and uvicorn, which LightRAG already brings.
 
 | File | Facts |
 |---|---|
-| `brain.py` | The CLI (`serve`, `doctor`, `sync`, `search`, `ask`, `enhance`, `drift`, `connect`, `version`). Refuses any Python other than 3.13. Except `serve` and `doctor`, commands talk to a running server over HTTP: `BRAIN_URL`, else `BRAIN_PUBLIC_URL`, else the local host and port; bearer token `BRAIN_API_TOKEN`, else basic auth. `drift` and `enhance --path` compute git facts in the local checkout (`git fetch origin main`, `git merge-base HEAD origin/main`, `git diff --name-only origin/main...HEAD`, `git status --porcelain`) and guess the repository from the remote URL. `doctor` prints PASS / WARN / FAIL per check and exits non-zero on any FAIL. |
+| `brain.py` | The CLI (`serve`, `doctor`, `sync`, `search`, `ask`, `enhance`, `drift`, `connect`, `version`). Refuses any Python other than 3.13. Except `serve` and `doctor`, commands talk to a running server over HTTP: `BRAIN_URL`, else `BRAIN_PUBLIC_URL`, else the local host and port; bearer token `BRAIN_API_TOKEN`, else basic auth. `drift` and `enhance --path` compute git facts in the local checkout (`git fetch origin main`, `git merge-base HEAD origin/main`, `git diff --name-only origin/main...HEAD`, `git status --porcelain`) and guess the repository from the remote URL. `doctor` prints PASS / WARN / FAIL per check and exits non-zero on any FAIL. `hook` installs or removes the
+git hooks that update AI-BRAIN after every pull of the tracked branch. |
 | `brain.cmd`, `brain.sh` | launchers that run `brain.py` with `.venv`; they print how to install when `.venv` is missing |
 | `setup.ps1`, `setup.sh` | offline installers ([02](02-INSTALLATION.md)); require Python 3.13; can be run again (they keep `.env`, `repos.json` and `data/`, and rebuild `.venv` only when it is not 3.13) |
 | `requirements.txt` | `lightrag-hku[api]==1.5.7` (pinned, because the provider uses its REST API and variable names) plus pdfplumber, pypdfium2, python-pptx, openpyxl |
@@ -174,7 +175,9 @@ appendix → `data/srs/output/<timestamp>-<title>.md` plus a `.json` with metada
 Registry and sets (the implicit set `all`), `resolve_scope()` (a branch overlay replaces its repository when
 `branch` matches), `git()` (token as an `http.extraHeader`, `GIT_TERMINAL_PROMPT=0`, no console window on
 Windows, credentials masked in errors, `BRAIN_GIT_TIMEOUT`), `update_checkout()`, `sync_repo()` (update, index,
-code vectors, state), `sync_all()` (one at a time), `request_sync()` (debounce), `index_branch()` /
+code vectors, state), `sync_all()` (one at a time), `request_sync()` (starts at once; a request during a running
+update makes it run once more), `watch_local()` (re-indexes local checkouts whose tracked branch moved),
+`hook_script()` (the git hook `brain hook` installs), `index_branch()` /
 `remove_branch()` (git worktrees), `state()` in `data/state.json`, `webhook_info()`, `overview()`.
 
 ## 16. brain/drift.py

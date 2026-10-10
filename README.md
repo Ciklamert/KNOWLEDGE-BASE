@@ -42,7 +42,8 @@ MCP or a REST API. The only outbound connection is to the organisation's **OpenA
 Every function is available in the **web UI**, the **REST API** and **MCP**. The UI also shows both graphs, uploads
 and removes documents, manages repositories, sets and webhooks, edits every setting, and shows the state,
 progress and errors of every background job. A merge into a repository's tracked branch on **GitLab** or
-**TFS / Azure DevOps Server** updates its code graph through a webhook.
+**TFS / Azure DevOps Server** updates its code graph through a webhook, and so does every pull of that branch (local
+checkouts are watched; `brain hook` covers any other checkout). Every update pulls immediately.
 
 ## Quick start
 
@@ -74,6 +75,7 @@ documents under **Documents** and connect your agents (`brain connect`). The ful
 | `brain ask "…" [--set S] [--branch B]` | ask a question |
 | `brain enhance "…" [--set S] [--path .] [--repo R]` | enhance a prompt; `--path` adds branch-drift notes from a local checkout |
 | `brain guide ["focus"] [--set S] [--repo R]` | write a project guide for newcomers |
+| `brain hook [PATH] [--repo R] [--remove]` | in a checkout: every `git pull` of the tracked branch updates AI-BRAIN |
 | `brain drift [PATH] [--repo R] [--main main]` | compare the branch checked out in PATH with the indexed `main` |
 | `brain connect [claude\|opencode\|pi\|all]` | print ready-to-paste agent configuration |
 | `brain version` | print the version |

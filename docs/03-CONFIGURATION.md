@@ -124,9 +124,9 @@ Repositories and repository sets live in `repos.json` (another file: `BRAIN_REPO
 |---|---|---|---|
 | `BRAIN_SYNC_ON_START` | `true` | live | Clone/update and index all repositories when the server starts. |
 | `BRAIN_SYNC_INTERVAL_MINUTES` | `0` | live | Also fetch+index every N minutes (0 = webhooks only). |
+| `BRAIN_WATCH_LOCAL_SECONDS` | `30` | live | Local-path repositories: every N seconds, check whether the tracked branch moved (git pull, merge, commit) and re-index it (0 = off). |
 | `BRAIN_DEFAULT_BRANCH` | `main` | live | Branch the code graph follows when a repository does not name one. |
 | `BRAIN_WEBHOOK_EVENTS` | `merge,push` | live | Events that trigger an update of the tracked branch: merge (MR/PR merged), push (any push to it). |
-| `BRAIN_WEBHOOK_DEBOUNCE_SECONDS` | `15` | live | Webhooks for the same repo within this window run one update. |
 | `BRAIN_GITLAB_WEBHOOK_SECRET` | (empty) | live | Group-level GitLab webhook secret (/webhooks/gitlab). Each repository also has its own webhook and secret. Secret: never shown by the UI. |
 | `BRAIN_TFS_WEBHOOK_USER` | (empty) | live | Group-level TFS service-hook user (/webhooks/tfs). |
 | `BRAIN_TFS_WEBHOOK_PASSWORD` | (empty) | live | Group-level TFS service-hook password (/webhooks/tfs). Each repository also has its own webhook and secret. Secret: never shown by the UI. |

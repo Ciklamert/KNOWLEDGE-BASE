@@ -8,7 +8,7 @@ It ends with the known limits, a rating and the recommended next steps.
 - Every module, the REST and MCP surface, the installers and this documentation were reviewed against each other;
   the static test enforces that every setting, route and MCP tool is documented and that every link works.
 - The end-to-end test runs on Windows 11 with Python 3.13.16 from an empty data folder against the mock gateway, and
-  all 73 checks pass ([15-TESTING.md](15-TESTING.md)).
+  all 75 checks pass ([15-TESTING.md](15-TESTING.md)).
 - The answer sizes below were measured on the test repository through MCP (≈ 4 characters per token).
 
 ## 2. AI agents over MCP: tokens
@@ -51,7 +51,11 @@ locally.
 - **Enhance prompt** and the **Requirements writer** turn research into a task for a coding agent or a specification
   for business readers.
 
-## 5. Known limits and risks
+## 5. Updates
+A merge (webhook) or a pull of the tracked branch (watched local checkouts, `brain hook` in any other checkout)
+updates the repository's graph; every update pulls at once, and requests during an update make it run once more.
+
+## 6. Known limits and risks
 - Tested against a **mock** corporate API. Retrieval and tool behaviour are verified; answer quality, guide quality
   and real multilingual ranking depend on the organisation's models and must be checked with the real gateway.
 - **Linux**: the installer is syntax-checked but has not been run on a Linux machine. GitLab and TFS were simulated
@@ -62,7 +66,7 @@ locally.
 - **Documents**: borderless tables and complex multi-column PDF layouts convert less well.
 - **One document graph** for all sets; separate document spaces need a second instance.
 
-## 6. Rating
+## 7. Rating
 
 | Area | Score (of 10) | Why |
 |---|---|---|
@@ -70,13 +74,13 @@ locally.
 | Search, grep, glob, read for agents | 9 | graph-ranked grep with modes, outline before read, compact symbol, named symbols first, three-source search |
 | Exploring and learning for people | 8.5 | structure view, cited project guide, evidence everywhere, ask from the graph; one shared account |
 | Architecture and simplicity | 9 | a small core around two ready engines; one tool implementation behind MCP, REST and the agents |
-| Requirements coverage | 9 | all 29 requirements traced to code and tests ([00](00-REQUIREMENTS.md)) |
+| Requirements coverage | 9 | all 30 requirements traced to code and tests ([00](00-REQUIREMENTS.md)) |
 | Code quality | 8 | consistent, documented modules; a few long functions (search pipeline, requirements writer) |
-| Testing | 7.5 | static and 73 end-to-end checks; no real-API, Linux or load tests yet |
+| Testing | 7.5 | static and 75 end-to-end checks; no real-API, Linux or load tests yet |
 | Documentation | 9 | step-by-step guides, 25 decision records, a generated configuration reference |
 | **Overall** | **8.7** | ready for a pilot; the next step is the real gateway, real repositories and real questions |
 
-## 7. Recommended next steps
+## 8. Recommended next steps
 1. Pilot with the real corporate API and two or three real repositories; tune `BRAIN_SEARCH_DETAIL`,
    `BRAIN_RERANK_WEIGHT` and `BRAIN_SEARCH_TOP_K`.
 2. Keep 20 real questions in Turkish and English, with the expected files and documents, as a regression set, and

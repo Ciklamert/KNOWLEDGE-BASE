@@ -236,7 +236,6 @@ def main():
         check("own GitLab webhook accepted", r.status_code == 202, r.text)
         if r.status_code == 202 and r.json().get("job"):
             wait_job(c, r.json()["job"])
-        time.sleep(2.5)   # debounce window of the test configuration
         if a.gitlab_secret:
             payload = {"object_kind": "merge_request", "project": {"name": a.repo, "git_http_url": str(origin)},
                        "object_attributes": {"action": "merge", "state": "merged", "target_branch": "main"}}
@@ -289,6 +288,33 @@ def main():
               [(h["project"], h["name"]) for h in r["code"]])
         r = c.delete(f"/api/repos/{a.repo}/branches/feature/discount")
         check("branch overlay removed", r.status_code == 200, r.text[:200])
+
+        # a local checkout is re-indexed after every pull of its tracked branch
+        local = origin.parent / "local-checkout"
+        if not local.exists():
+            subprocess.run(["git", "clone", "-q", str(origin), str(local)], check=True)
+        git(local, "checkout", "-q", "main")
+        saved = c.get("/api/repos").json()
+        rows = [{k: x[k] for k in ("name", "provider", "url", "path", "branch")} for x in saved["repos"]]
+        r = ui.put("/api/repos", json={"repos": rows + [{"name": "local-pull", "path": str(local), "branch": "main"}],
+                                       "sets": saved["sets"] and {k: v for k, v in saved["sets"].items() if k != "all"}})
+        job = c.post("/api/repos/local-pull/sync").json()["job"]
+        wait_job(c, job)
+        Path(local, "src/billing/loyalty.py").write_text("def loyalty_points(amount: float) -> int:\n    return int(amount // 10)\n",
+                                                        encoding="utf-8")
+        git(local, "add", "-A")
+        git(local, "commit", "-qm", "loyalty points (as if pulled from main)")
+        new_head = git(local, "rev-parse", "HEAD")
+        end, seen = time.time() + 120, None
+        while time.time() < end:
+            seen = next(x for x in c.get("/api/repos").json()["repos"] if x["name"] == "local-pull").get("commit")
+            if seen == new_head and not any(j["state"] == "running" for j in c.get("/api/jobs", params={"kind": "sync"}).json()):
+                break
+            time.sleep(2)
+        check("a pull of the tracked branch in a local checkout is indexed automatically", seen == new_head, (seen, new_head))
+        r = c.post("/api/search", json={"query": "loyalty_points", "scope": "code", "target": "repo:local-pull"}).json()
+        check("the pulled code is searchable", any(h["name"] == "loyalty_points" for h in r["code"]), [h["name"] for h in r["code"][:3]])
+        ui.put("/api/repos", json={"repos": rows, "sets": {k: v for k, v in saved["sets"].items() if k != "all"}})
 
     # ---- cleanup of the test document
     if doc:

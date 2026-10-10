@@ -80,11 +80,14 @@ One entry and no sets. Every request covers it.
 | server start (`BRAIN_SYNC_ON_START=true`) | all repositories |
 | the repository's own webhook, or a group-level GitLab/TFS webhook, for the tracked branch | that repository ([09-WEBHOOKS.md](09-WEBHOOKS.md)) |
 | *Update* / *Update all now* in the UI, `brain sync [name]`, MCP `sync_repo`, `POST /api/repos/{name}/sync`, `POST /api/repos/sync` | that repository / all |
+| a pull (or merge, or commit) of the tracked branch in a **local checkout** | that repository, within `BRAIN_WATCH_LOCAL_SECONDS` (default 30): the server notices that the branch head moved |
+| a `git pull` of the tracked branch in **any developer checkout** with the AI-BRAIN git hook (`brain hook`) | that repository, right after the pull |
 | `BRAIN_SYNC_INTERVAL_MINUTES` above 0 | all repositories, periodically (when webhooks are not possible) |
 
-Requests for the same repository within `BRAIN_WEBHOOK_DEBOUNCE_SECONDS` (default 15) become one job; a merge
-usually fires both a merge and a push event. For webhook-triggered updates the job waits up to 5 seconds so the
-git server can finish writing the merge commit.
+An update starts at once and pulls immediately: there is no waiting window. If another request for the same
+repository arrives while its update is running (a merge usually fires a merge and a push event, or a developer
+pulls again), it is not lost and not run in parallel: the running update runs once more when it finishes, so the
+newest commit is always indexed.
 
 One update does:
 1. **Server-managed clone**: clone on first use (`--single-branch`, no tags), afterwards `fetch` the tracked
@@ -95,6 +98,19 @@ One update does:
 3. Multilingual code vectors for new and changed symbols only.
 4. The indexed commit, time, node and edge counts and any error are stored in `data/state.json` and shown on the
    Repositories page.
+
+### Updating on every pull
+- **Local-path repositories** need nothing: every `BRAIN_WATCH_LOCAL_SECONDS` the server compares the head of the
+  tracked branch with the indexed commit. When someone pulls (or merges, or commits) on that branch, the next check
+  starts an update. A checkout that is on another branch is left alone. `0` turns the check off.
+- **Any checkout, also on developer machines**: `brain hook [PATH] [--repo NAME]` installs two git hooks,
+  `post-merge` (runs after every `git pull`) and `post-rewrite` (after `git pull --rebase`). When the pulled branch
+  is the repository's tracked branch, the hook runs `brain sync NAME` in the background, so the server pulls its own
+  clone at once. It needs `BRAIN_URL` and `BRAIN_API_TOKEN` in the developer's environment (or this folder's `.env`)
+  and never blocks git. `brain hook --remove` removes it; an existing hook that is not AI-BRAIN's is never
+  overwritten (the command prints the line to add instead).
+- **Server-managed clones** change only when the server pulls: webhooks, the hook above, the buttons, the CLI, MCP
+  or the interval.
 
 ## 5. Git credentials
 - HTTPS with a token: the repository's own `user`/`token`, else the GitLab or TFS credentials when the URL is on

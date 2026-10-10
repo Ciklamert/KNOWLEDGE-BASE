@@ -1,7 +1,7 @@
 # Architecture decision records
 
 Each record states the context, the decision, the alternatives considered and the consequences. Requirement numbers
-(R1-R29) refer to [00-REQUIREMENTS.md](../00-REQUIREMENTS.md).
+(R1-R30) refer to [00-REQUIREMENTS.md](../00-REQUIREMENTS.md).
 
 | ADR | Decision |
 |---|---|
@@ -13,7 +13,7 @@ Each record states the context, the decision, the alternatives considered and th
 | [ADR-006](ADR-006-search-without-llm.md) | Search without LLM calls |
 | [ADR-007](ADR-007-agents.md) | Ask and enhance agents: one tool-calling loop with graceful degradation |
 | [ADR-008](ADR-008-authentication.md) | Authentication: one user from configuration, signed cookie, bearer token for agents |
-| [ADR-009](ADR-009-webhooks-and-sync.md) | Webhook-driven, debounced updates of server-managed clones |
+| [ADR-009](ADR-009-webhooks-and-sync.md) | Updates on every merge and every pull of the tracked branch |
 | [ADR-010](ADR-010-branch-drift.md) | Branch drift: analysis with recommendations plus optional branch overlays |
 | [ADR-011](ADR-011-python-version.md) | Python 3.13 only |
 | [ADR-012](ADR-012-mcp-transport.md) | MCP over Streamable HTTP with JSON responses, implemented in the server |

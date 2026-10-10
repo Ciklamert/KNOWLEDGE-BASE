@@ -8,6 +8,7 @@
   brain enhance "prompt" [--set S]  print an implementation-ready prompt for an AI coding agent
   brain guide ["topic"] [--set S]   write a project guide for newcomers
   brain drift [PATH] [--repo R]     compare your branch in PATH (default: .) with the indexed main
+  brain hook [PATH] [--repo R] [--remove]   in a checkout: every `git pull` of main updates AI-BRAIN
   brain connect [claude|opencode|pi|all]   print the configuration for an AI agent
   brain version
 """
@@ -126,6 +127,39 @@ def cmd_guide(a):
     print(f"\n-- {r['ms']} ms, usage: {r.get('usage')}, notes: {r['errors']}", file=sys.stderr)
 
 
+HOOKS = ("post-merge", "post-rewrite")
+
+
+def cmd_hook(a):
+    """Install (or remove) git hooks in a checkout so that every pull of the tracked branch updates AI-BRAIN."""
+    path = Path(a.path).resolve()
+    hooks = Path(_git(path, "rev-parse", "--git-path", "hooks") or "")
+    if not str(hooks):
+        sys.exit(f"{path} is not a git checkout")
+    hooks = hooks if hooks.is_absolute() else path / hooks
+    if a.remove:
+        for h in HOOKS:
+            f = hooks / h
+            if f.exists() and "ai-brain:" in f.read_text(encoding="utf-8", errors="replace"):
+                f.unlink()
+                print(f"removed {f}")
+        return
+    repo = a.repo or _guess_repo(_git(path, "remote", "get-url", "origin"), path)
+    branch = next((r["branch"] for r in api("GET", "/api/repos")["repos"] if r["name"] == repo), "main")
+    from brain import repos
+    text = repos.hook_script(repo, branch, Path(sys.executable).as_posix(), (ROOT / "brain.py").as_posix())
+    hooks.mkdir(parents=True, exist_ok=True)
+    for h in HOOKS:
+        f = hooks / h
+        if f.exists() and "ai-brain:" not in f.read_text(encoding="utf-8", errors="replace"):
+            sys.exit(f"{f} already exists and is not AI-BRAIN's: add this line to it instead:\n"
+                     f"  \"{Path(sys.executable).as_posix()}\" \"{(ROOT / 'brain.py').as_posix()}\" sync {repo} &")
+        f.write_text(text, encoding="utf-8", newline="\n")
+        f.chmod(0o755)
+        print(f"installed {f}")
+    print(f"every `git pull` of {branch} in {path} now updates repository '{repo}' on {base_url()}")
+
+
 def cmd_drift(a):
     path = Path(a.path).resolve()
     facts = local_git_facts(path, a.main)
@@ -240,6 +274,11 @@ def main():
     p.add_argument("--repo")
     p.add_argument("--main", default="main")
     p.set_defaults(f=cmd_drift)
+    p = sub.add_parser("hook")
+    p.add_argument("path", nargs="?", default=".")
+    p.add_argument("--repo")
+    p.add_argument("--remove", action="store_true")
+    p.set_defaults(f=cmd_hook)
     p = sub.add_parser("connect")
     p.add_argument("agent", nargs="?", default="all", choices=["claude", "opencode", "pi", "all"])
     p.set_defaults(f=cmd_connect)

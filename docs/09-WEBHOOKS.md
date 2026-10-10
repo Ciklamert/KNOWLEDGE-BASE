@@ -24,9 +24,9 @@ break it. A group-level hook covers many repositories with one configuration. Bo
 4. Only events for the repository's `branch` count; anything else → 200 `{"ignored": "<reason>"}`.
 5. `BRAIN_WEBHOOK_EVENTS` (default `merge,push`) selects which kinds trigger an update: `merge` = merged MR/PR,
    `push` = any push to the tracked branch.
-6. An update job is queued → 202 with the job id. Events for the same repository within
-   `BRAIN_WEBHOOK_DEBOUNCE_SECONDS` (default 15) become one job (a merge usually fires a merge and a push event).
-7. The job waits up to 5 seconds, fetches, resets the server-managed clone to the branch and re-indexes
+6. An update starts at once → 202 with the job id. If the repository is already being updated, the answer says
+   `"queued": true` and that update runs once more when it finishes (a merge usually fires a merge and a push event).
+7. The job pulls immediately (fetch, reset the server-managed clone to the branch) and re-indexes
    ([04-REPOSITORIES-AND-SETS.md](04-REPOSITORIES-AND-SETS.md) §4). Progress is on **Overview** and
    **Repositories**; the last 50 deliveries are listed under **Repositories → Webhook deliveries**.
 
@@ -72,6 +72,9 @@ means TFS (secret = basic-auth password, any user name). Anything else → 400.
   `http(s)://<server>:8765/webhooks/tfs` and those basic-auth values.
 
 ## 6. Without webhooks
+- Local-path repositories are re-indexed after every pull of their tracked branch, without any webhook
+  ([04-REPOSITORIES-AND-SETS.md](04-REPOSITORIES-AND-SETS.md) §4).
+- `brain hook` in a developer checkout updates AI-BRAIN after every `git pull` of the tracked branch.
 Set `BRAIN_SYNC_INTERVAL_MINUTES` (for example 10): all repositories are fetched and indexed at that interval. An
 unchanged repository costs one fetch and a hash check.
 

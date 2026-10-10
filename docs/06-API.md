@@ -70,7 +70,7 @@ curl -s -H "Authorization: Bearer $BRAIN_API_TOKEN" -H "Content-Type: applicatio
 | `GET /api/repos` | | `repos[]` (configuration without tokens, `token_set`, `remote`, `managed`, `checkout`, `sets`, own `webhook` {`url`, `secret`, `provider`, `how`}, `indexed`, `nodes`, `commit`, `indexed_at`, `error`, `vectors`, `branches`), `sets`, `file` |
 | `PUT /api/repos` | `{"repos": [{name, provider, url, path, branch, user, token, aliases}], "sets": {"<set>": ["<repo>", ...]}}` | the validated, saved `repos.json` (`repos`, `sets`); webhook secrets are generated; an empty token keeps the stored one |
 | `POST /api/repos/sync` | | `{"job"}`: update and index all repositories |
-| `POST /api/repos/{name}/sync` | | `{"job", "debounced"}`; `job` is null when an update was requested within the debounce window |
+| `POST /api/repos/{name}/sync` | | `{"job", "queued"}`; starts at once; when the repository is already being updated, `job` is null, `queued` is true and that update runs once more |
 | `POST /api/repos/{name}/branches` | `{"branch"}` | `{"job"}`: index a pushed branch as an overlay |
 | `DELETE /api/repos/{name}/branches/{branch}` | | removes the overlay; the branch may contain `/` |
 
@@ -131,7 +131,7 @@ See [17-REQUIREMENTS-WRITER.md](17-REQUIREMENTS-WRITER.md).
 
 | Method and path | Authentication | Returns |
 |---|---|---|
-| `POST /webhooks/repo/{name}` | the repository's own secret: GitLab `X-Gitlab-Token`, or TFS basic-auth password | 202 accepted (with `job`, `debounced`), 200 ignored (with the reason), 400 not a GitLab or TFS payload, 401 wrong secret, 404 unknown repository, 503 no secret yet |
+| `POST /webhooks/repo/{name}` | the repository's own secret: GitLab `X-Gitlab-Token`, or TFS basic-auth password | 202 accepted (with `job`, `queued`), 200 ignored (with the reason), 400 not a GitLab or TFS payload, 401 wrong secret, 404 unknown repository, 503 no secret yet |
 | `POST /webhooks/gitlab` | `X-Gitlab-Token` = `BRAIN_GITLAB_WEBHOOK_SECRET` | 202, 200 ignored, 401, 404 repository not in `repos.json`, 503 secret not configured |
 | `POST /webhooks/tfs` | basic auth = `BRAIN_TFS_WEBHOOK_USER` / `BRAIN_TFS_WEBHOOK_PASSWORD` | same as GitLab |
 | `GET /api/webhooks` | login | group-hook URLs, whether they are configured, `events`, the last 50 `deliveries` |

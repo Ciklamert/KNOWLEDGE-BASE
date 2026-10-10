@@ -17,7 +17,7 @@
 │ drift.py     branch vs. main analysis ────────────────────┤                                                   │
 │ mcp.py       MCP tools ───────────────────────────────────┤                                                   │
 │ codevec.py   multilingual code vector index ──────────────┤                                                   │
-│ repos.py     clone/fetch, index, sets, overlays, debounced sync ◄── webhooks.py (GitLab, TFS)               │
+│ repos.py     pull, index, sets, overlays, local-pull watch      ◄── webhooks.py (GitLab, TFS), git hooks       │
 │                                                           ▼                                                   │
 │ providers/__init__.py      CodeGraph interface                      DocGraph interface                        │
 │ providers/codebase_memory.py ─────┐                    providers/lightrag.py + convert.py ─┐                │
@@ -103,8 +103,9 @@ each capability is written with its own search → the other sections are writte
 traceability appendix added, saved under `data/srs/output/`. Details: [17-REQUIREMENTS-WRITER.md](17-REQUIREMENTS-WRITER.md).
 
 ### 3.5 Repository update
-A webhook, a button, the CLI, MCP `sync_repo`, start-up or the interval calls `repos.request_sync`, which merges
-requests for the same repository within `BRAIN_WEBHOOK_DEBOUNCE_SECONDS` into one job. The job brings the
+A webhook, a git hook after a pull, a pull noticed in a local checkout, a button, the CLI, MCP `sync_repo`, start-up
+or the interval calls `repos.request_sync`, which starts the update at once; a request that arrives while the same
+repository is being updated makes that update run once more when it finishes. The job brings the
 checkout to the tracked branch (server-managed clone: `fetch` + `checkout -B` + `reset --hard`; local checkout:
 `pull --ff-only` only when clean and on the tracked branch), runs the code engine's incremental index, updates
 the multilingual code vectors of changed symbols, and records the indexed commit in `data/state.json`.

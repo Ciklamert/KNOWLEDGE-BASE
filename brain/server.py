@@ -74,6 +74,7 @@ def boot() -> None:
             repos.request_sync(None, "interval")
             interval = cfg.get("BRAIN_SYNC_INTERVAL_MINUTES")
     threading.Thread(target=initial_sync, daemon=True).start()
+    threading.Thread(target=repos.watch_local, daemon=True, name="watch-local").start()
 
 
 @asynccontextmanager
@@ -333,7 +334,7 @@ def repo_sync(name: str):
     except KeyError as exc:
         raise _err(exc) from None
     job = repos.request_sync(name, "manual")
-    return {"job": job.id if job else None, "debounced": job is None}
+    return {"job": job.id if job else None, "queued": job is None}
 
 
 @app.post("/api/repos/{name}/branches")

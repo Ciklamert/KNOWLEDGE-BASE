@@ -42,7 +42,7 @@ The script exits with the number of failures. It checks:
    BRAIN_GITLAB_WEBHOOK_SECRET=gl-secret
    BRAIN_TFS_WEBHOOK_USER=tfs
    BRAIN_TFS_WEBHOOK_PASSWORD=tfs-pass
-   BRAIN_WEBHOOK_DEBOUNCE_SECONDS=2
+   BRAIN_WATCH_LOCAL_SECONDS=5
    ```
    and a `test-repos.json` with the repository `billing`, `"url": "gitlab:payments/billing"`. The "origin" is a
    local git repository at `/path/to/gl/payments/billing.git` (so the `gitlab:` shorthand is tested as well) with the
@@ -77,13 +77,16 @@ What it covers:
   push accepted);
 - branch drift: commits behind, conflict-risk file, recommendations, unpushed branch;
 - branch overlay: index, search with `branch`, remove;
+- a local checkout: a new commit on its tracked branch (as after a pull) is noticed and indexed automatically, and the
+  new code is searchable;
 - requirements writer: formats listed and a specification written with the default format.
 
 ## 3. Test record
 Windows 11, Python 3.13.16, codebase-memory-mcp 0.11.0, LightRAG 1.5.7, mock gateway, empty data folder:
 - `setup.ps1 -NonInteractive` built `.venv` and installed every package from `wheels/` with `--no-index`;
 - all static checks pass;
-- all 73 end-to-end checks pass; cold start to `ready` takes about 10 seconds.
+- all 75 end-to-end checks pass; `brain hook` was installed in a checkout, and a `git pull` of `main` started an
+  update on the server; cold start to `ready` takes about 10 seconds.
 
 The Linux installer is syntax-checked; it has not been run on a Linux machine. GitLab and TFS were simulated with
 their webhook payloads; no real GitLab or TFS server was used.

@@ -125,6 +125,9 @@ SCHEMA: list[Setting] = [
     S("CBM_QUERY_TIMEOUT", "120", "Code graph", "Seconds one code-graph query may take.", "float"),
     S("BRAIN_SYNC_ON_START", "true", "Updates & webhooks", "Clone/update and index all repositories when the server starts.", "bool"),
     S("BRAIN_SYNC_INTERVAL_MINUTES", "0", "Updates & webhooks", "Also fetch+index every N minutes (0 = webhooks only).", "int"),
+    S("BRAIN_WATCH_LOCAL_SECONDS", "30", "Updates & webhooks",
+      "Local-path repositories: every N seconds, check whether the tracked branch moved (git pull, merge, commit) "
+      "and re-index it (0 = off).", "int"),
     S("BRAIN_CODE_VECTORS", "both", "Code graph",
       "Semantic code search: local = only the code engine's bundled code embeddings (offline, English-oriented); "
       "both = also a code vector index built with the corporate multilingual embedding model (Turkish questions find "
@@ -151,7 +154,6 @@ SCHEMA: list[Setting] = [
     S("BRAIN_GIT_SSL_VERIFY", "true", "Git servers", "Verify TLS for git (false only for broken internal CAs).", "bool"),
     S("BRAIN_WEBHOOK_EVENTS", "merge,push", "Updates & webhooks",
       "Events that trigger an update of the tracked branch: merge (MR/PR merged), push (any push to it)."),
-    S("BRAIN_WEBHOOK_DEBOUNCE_SECONDS", "15", "Updates & webhooks", "Webhooks for the same repo within this window run one update.", "float"),
     S("BRAIN_GITLAB_WEBHOOK_SECRET", "", "Updates & webhooks", "Group-level GitLab webhook secret (/webhooks/gitlab). Each repository also has its own webhook and secret.", "secret"),
     S("BRAIN_TFS_WEBHOOK_USER", "", "Updates & webhooks", "Group-level TFS service-hook user (/webhooks/tfs)."),
     S("BRAIN_TFS_WEBHOOK_PASSWORD", "", "Updates & webhooks", "Group-level TFS service-hook password (/webhooks/tfs). Each repository also has its own webhook and secret.", "secret"),

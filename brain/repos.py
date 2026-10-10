@@ -26,7 +26,9 @@ from . import settings as cfg
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _state_lock = threading.Lock()
 _sync_lock = threading.Lock()
-_pending: dict[str, float] = {}        # repo name -> time an update was requested (debounce)
+_flags = threading.Lock()
+_active: set[str] = set()              # repositories with an update job queued or running
+_again: set[str] = set()               # repositories that got a new request while their update was running
 
 
 # ---------------------------------------------------------------- state (what is indexed at which commit)
@@ -218,22 +220,75 @@ def sync_all(job: jobs.Job, names: list[str] | None = None) -> dict:
 
 
 def request_sync(name: str | None = None, reason: str = "manual") -> jobs.Job | None:
-    """Queue an update+index in the background. Requests for the same repo within the debounce window are
-    merged into one job (a merge on GitLab typically fires both a merge and a push webhook)."""
+    """Start an update (pull + incremental index) in the background at once. A request for a repository whose update
+    is already running is not lost and not run twice in parallel: that update runs once more when it finishes, so
+    changes that arrived meanwhile (a merge fires both a merge and a push event) are always picked up.
+    Returns the new job, or None when every requested repository was already being updated (it is queued)."""
     names = [name] if name else [r["name"] for r in all_repos()]
-    now = time.time()
-    window = cfg.get("BRAIN_WEBHOOK_DEBOUNCE_SECONDS")
-    fresh = [n for n in names if now - _pending.get(n, 0) > window]
+    with _flags:
+        fresh = [n for n in names if n not in _active]
+        _again.update(n for n in names if n in _active)
+        _active.update(fresh)
     if not fresh:
         return None
-    for n in fresh:
-        _pending[n] = now
 
     def work(job):
-        if reason.startswith("webhook"):
-            time.sleep(min(window, 5))   # let the git server finish writing the merge commit
-        return sync_all(job, fresh)
+        try:
+            result = sync_all(job, fresh)
+            while True:
+                with _flags:
+                    again = [n for n in fresh if n in _again]
+                    _again.difference_update(again)
+                    if not again:
+                        _active.difference_update(fresh)
+                        return result
+                job.log(f"new changes were announced during the update; updating again: {', '.join(again)}")
+                more = sync_all(job, again)
+                result["synced"].update(more["synced"])
+                result["errors"].update(more["errors"])
+        except BaseException:
+            with _flags:
+                _active.difference_update(fresh)
+                _again.difference_update(fresh)
+            raise
     return jobs.start("sync", f"Update code graph: {', '.join(fresh)} ({reason})", work)
+
+
+def watch_local() -> None:
+    """Re-index a local checkout every time its tracked branch moves: a `git pull`, a merge or a commit on `main`
+    changes the branch head, and the next check (every BRAIN_WATCH_LOCAL_SECONDS) starts an update. Server-managed
+    clones change only through syncs (webhooks, interval, buttons), so they are not watched. Runs for ever."""
+    while True:
+        every = cfg.get("BRAIN_WATCH_LOCAL_SECONDS")
+        time.sleep(max(5, every if every > 0 else 60))
+        if every <= 0 or jobs.running("sync"):
+            continue
+        known = state()["repos"]
+        for r in all_repos():
+            root = checkout(r)
+            if managed(r) or not (root / ".git").exists():
+                continue
+            try:
+                if git(root, "rev-parse", "--abbrev-ref", "HEAD", timeout=15) != r["branch"]:
+                    continue
+                commit = head(root)
+            except RuntimeError:
+                continue
+            indexed = known.get(r["name"], {}).get("commit")
+            if indexed and commit != indexed:
+                request_sync(r["name"], f"local {r['branch']} moved (pull)")
+
+
+def hook_script(repo: str, branch: str, python: str, brain: str) -> str:
+    """A git hook (post-merge = after every `git pull`, post-rewrite = after `git pull --rebase`) that asks AI-BRAIN
+    to update `repo` when the pulled branch is the tracked one. Runs in the background; never blocks git."""
+    return f"""#!/bin/sh
+# ai-brain: update the knowledge base after every pull of {branch} (installed by `brain hook`)
+[ "$1" = "amend" ] && exit 0
+[ "$(git rev-parse --abbrev-ref HEAD)" = "{branch}" ] || exit 0
+"{python}" "{brain}" sync {repo} >/dev/null 2>&1 &
+exit 0
+"""
 
 
 # ---------------------------------------------------------------- branch overlays

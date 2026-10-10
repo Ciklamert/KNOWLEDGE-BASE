@@ -555,7 +555,7 @@ INIT.repos = () => {
 }
 function hookCell(r) {
   const w = r.webhook || {}
-  if (r.provider === "local") return `<span class="muted">local checkout: no webhook; use Update or the update interval</span>`
+  if (r.provider === "local") return `<span class="muted">local checkout: re-indexed after every pull of ${esc(r.branch)} (checked every BRAIN_WATCH_LOCAL_SECONDS); no webhook needed</span>`
   return `<div class="hook"><span class="tag">${esc(w.provider)}</span><code class="sel">${esc(w.url)}</code>
     <button class="ghost small" data-copy="${esc(w.url)}">Copy URL</button>
     <button class="ghost small" data-copy="${esc(w.secret)}">Copy secret</button>

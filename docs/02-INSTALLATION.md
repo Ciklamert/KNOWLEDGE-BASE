@@ -110,7 +110,9 @@ failures show their reason.
 
 ## 10. Connect the webhooks
 Each repository on the **Repositories** page shows its own webhook URL, secret and setup steps. Enter them in
-GitLab or TFS: [09-WEBHOOKS.md](09-WEBHOOKS.md).
+GitLab or TFS: [09-WEBHOOKS.md](09-WEBHOOKS.md). Local-path repositories need no webhook: they are re-indexed after
+every pull of their tracked branch. To update AI-BRAIN after every `git pull` in another checkout, run
+`brain hook` in it ([04-REPOSITORIES-AND-SETS.md](04-REPOSITORIES-AND-SETS.md) §4).
 
 ## 11. Connect AI agents
 `brain connect` prints ready-to-paste configuration for Claude Code, opencode and pi with your URL and token.
