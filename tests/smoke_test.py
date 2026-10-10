@@ -69,6 +69,10 @@ def main():
 
     st = c.get("/api/status").json()
     check("system is ready (code + docs + agents)", st["ready"], {k: v["state"] for k, v in st["engines"].items()})
+    end = time.time() + 600   # the first sync (clone + index + code vectors) runs in the background after READY
+    while time.time() < end and any(j["state"] == "running" for j in c.get("/api/jobs", params={"kind": "sync"}).json()):
+        time.sleep(2)
+    check("first sync finished, repositories indexed", all(r["indexed"] for r in c.get("/api/repos").json()["repos"]))
 
     # ---- documents
     note = "# Ödeme Kuralları\nRefunds above 5000 TL need manager approval (iade onayı). The RefundPolicy applies to all channels."
@@ -146,6 +150,30 @@ def main():
     check("MCP grep (grep replacement)", not err and "apply_vat" in text, text[:200])
     r = c.get("/api/code/files", params={"pattern": "*.ts", "target": f"repo:{a.repo}"}).json()
     check("REST files", any(f.endswith("api.ts") for f in r["files"]), r)
+
+    # ---- token economy and exact lookups for agents
+    tools = m.post("/mcp", json={"jsonrpc": "2.0", "id": 10, "method": "tools/list"}).json()["result"]["tools"]
+    size = len(json.dumps(tools, separators=(",", ":")))
+    check("MCP tool list is compact (< 6,000 characters)", size < 6000, size)
+    text, err = mcp_call("outline", {"path": "src/billing/invoice.py", "repo": a.repo})
+    check("MCP outline (file structure)", not err and "create_invoice" in text, text[:200])
+    text, err = mcp_call("read", {"path": "src/billing/tax.py", "start": 1, "end": 5})
+    check("MCP read finds the repository by itself", not err and "lines 1-5" in text, text[:200])
+    text, err = mcp_call("grep", {"pattern": "apply_vat", "mode": "files", "repo": a.repo})
+    check("MCP grep mode=files", not err and "tax.py" in text, text[:200])
+    text, err = mcp_call("symbol", {"name": "InvoiceService.create_invoice", "repo": a.repo})
+    check("MCP symbol by qualified name, compact", not err and "create_invoice" in text and "lines" in text, text[:300])
+    brief, _ = mcp_call("search", {"query": "charge customer invoice", "detail": "brief"})
+    full, _ = mcp_call("search", {"query": "charge customer invoice", "detail": "full"})
+    check("search detail=brief is smaller than full", 0 < len(brief) < len(full) and "```" not in brief, (len(brief), len(full)))
+    r = c.post("/api/search", json={"query": "how does apply_vat work", "scope": "code"}).json()
+    check("an identifier in the question is ranked first", r["code"] and r["code"][0]["name"] == "apply_vat"
+          and "exact name" in r["code"][0]["matched"], [(h["name"], h.get("matched")) for h in r["code"][:3]])
+    r = c.get("/api/code/overview", params={"repo": a.repo, "aspects": "overview"}).json()
+    check("REST overview (structure without a model)", len(r.get("text", "")) > 20, str(r)[:200])
+    r = c.post("/api/guide", json={"target": f"repo:{a.repo}", "async": False}).json()
+    check("project guide written", len(r.get("guide", "")) > 20 and r.get("usage", {}).get("calls", 0) > 0,
+          (r.get("errors"), r.get("usage")))
     r = c.post("/api/ask", json={"question": "How is VAT applied?"}).json()
     check("ask returns its evidence", len(r.get("evidence", {}).get("code", [])) > 0, list(r.get("evidence", {}).keys()))
 

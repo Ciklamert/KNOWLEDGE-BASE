@@ -3,10 +3,10 @@
 **Status:** accepted · **Requirements:** R11, R12, R17, R9, R3
 
 ## Decision
-One loop (`brain/agents.py` `run_agent`) serves ask, enhance and the requirements writer; they differ in system
+One loop (`brain/agents.py` `run_agent`) serves ask, enhance, the project guide and the requirements writer; they differ in system
 prompt (ADR-022) and limits:
 1. the conversation is seeded with the full search (ADR-006, ADR-017), so even a one-shot answer is grounded;
-2. the model may call read-only tools (`search`, `semantic`, `docs`, `symbol`, `trace`, `snippet`, `read`, `grep`,
+2. the model may call read-only tools (`search`, `semantic`, `docs`, `symbol`, `trace`, `outline`, `read`, `grep`,
    `files`, `overview`) through OpenAI tool calling: at most `*_MAX_STEPS` rounds, 4 calls per round, 8,000
    characters per result, within `*_TIMEOUT`;
 3. a final answer without tools is forced when the steps or the time run out.

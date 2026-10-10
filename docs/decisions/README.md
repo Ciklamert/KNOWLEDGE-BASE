@@ -1,7 +1,7 @@
 # Architecture decision records
 
 Each record states the context, the decision, the alternatives considered and the consequences. Requirement numbers
-(R1-R27) refer to [00-REQUIREMENTS.md](../00-REQUIREMENTS.md).
+(R1-R29) refer to [00-REQUIREMENTS.md](../00-REQUIREMENTS.md).
 
 | ADR | Decision |
 |---|---|
@@ -28,3 +28,5 @@ Each record states the context, the decision, the alternatives considered and th
 | [ADR-021](ADR-021-requirements-writer.md) | Requirements writer: format-driven, evidence-first SRS generation |
 | [ADR-022](ADR-022-prompt-design.md) | System prompt design for ask, enhance and the requirements writer |
 | [ADR-023](ADR-023-three-sources-ai-first.md) | Three sources in every result; results designed for AI agents first |
+| [ADR-024](ADR-024-token-economy.md) | Token economy for AI agents over MCP |
+| [ADR-025](ADR-025-learning-a-project.md) | Learning a project: structure without a model, a guide written from evidence |

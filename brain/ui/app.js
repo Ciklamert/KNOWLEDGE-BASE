@@ -266,7 +266,8 @@ function agentMeta(r) {
   const steps = r.steps.length ? `<p class="steps">${r.steps.length} tool calls: ${r.steps.map((s) => esc(s.tool)).join(" → ")} (details under Evidence)</p>` : ""
   const src = r.sources.length ? `<p class="steps">Sources: ${r.sources.slice(0, 12).map((s) => `<code>${esc(s.ref)}</code>`).join(" ")}</p>` : ""
   const errs = r.errors.length ? `<div class="alert warn">${r.errors.map(esc).join("<br>")}</div>` : ""
-  return `${errs}${steps}${src}<p class="steps">${r.llm ? `Answered by ${esc(r.model || "the language model")}` : "Language model unavailable: showing grounded results"} in ${(r.ms / 1000).toFixed(1)} s.</p>`
+  const u = r.usage || {}, use = u.calls ? ` · ${u.calls} model calls, ${fmt(u.prompt_tokens)} tokens in, ${fmt(u.completion_tokens)} out` : ""
+  return `${errs}${steps}${src}<p class="steps">${r.llm ? `Answered by ${esc(r.model || "the language model")}` : "Language model unavailable: showing grounded results"} in ${(r.ms / 1000).toFixed(1)} s${use}.</p>`
 }
 INIT.ask = () => { liveAnalysis($("#a-q"), $("#a-an")); $("#a-go").onclick = runAsk; $("#a-q").addEventListener("keydown", (e) => e.key === "Enter" && (e.ctrlKey || e.metaKey) && runAsk()) }
 async function runAsk() {
@@ -293,6 +294,37 @@ async function runEnhance() {
     const r = await followJob(job, $("#e-progress"))
     $("#e-an").innerHTML = analysisHtml(r.analysis); $("#e-out").dataset.raw = r.enhanced; $("#e-out").innerHTML = md(r.enhanced); $("#e-meta").innerHTML = agentMeta(r); evidencePanel($("#e-ev"), r); $("#e-actions").hidden = false
   } catch (err) { $("#e-progress").innerHTML = `<div class="alert">${esc(err.message)}</div>` } finally { $("#e-go").disabled = false }
+}
+
+/* ---------------------------------------------------------- learn a project */
+let GUIDE_LAST = ""
+const scopeRepos = (t) => { const [k, v] = String(t || "set:all").split(":"); return k === "repo" ? [v] : (SETS[v] || []) }
+INIT.learn = () => {
+  $("#l-ov").onclick = learnStructure
+  $("#l-go").onclick = runGuide
+  $("#l-copy").onclick = () => navigator.clipboard.writeText(GUIDE_LAST).then(() => toast("Copied"), () => toast("Copy failed"))
+  $("#l-download").onclick = () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([GUIDE_LAST], { type: "text/markdown" }))
+    a.download = "project-guide.md"; a.click(); URL.revokeObjectURL(a.href) }
+  $("#l-publish").onclick = async () => {
+    try { await api("/api/docs/text", { method: "POST", json: { name: `Project guide - ${$("#l-target").value.split(":")[1]}.md`, text: GUIDE_LAST } }); toast("Added to the document graph (processing)") }
+    catch (err) { toast(err.message) } }
+}
+async function learnStructure() {
+  const names = scopeRepos($("#l-target").value), el = $("#l-struct")
+  el.innerHTML = names.length ? `<h2 class="sub">Structure</h2>` + names.map((n) => `<details open class="evidence"><summary>${esc(n)}</summary><pre class="code" data-ov="${esc(n)}">Loading…</pre></details>`).join("")
+    : `<p class="muted">No repository in this scope yet.</p>`
+  for (const n of names) {
+    const pre = $(`[data-ov="${CSS.escape(n)}"]`, el)
+    try { pre.textContent = (await api(`/api/code/overview?repo=${encodeURIComponent(n)}&aspects=overview,routes,hotspots`)).text } catch (err) { pre.textContent = err.message }
+  }
+}
+async function runGuide() {
+  $("#l-go").disabled = true; $("#l-out").innerHTML = ""; $("#l-meta").innerHTML = ""; $("#l-actions").hidden = true
+  try {
+    const { job } = await api("/api/guide", { method: "POST", json: { target: $("#l-target").value, topic: $("#l-topic").value.trim(), model: $("#l-model").value || null, async: true } })
+    const r = await followJob(job, $("#l-progress"))
+    GUIDE_LAST = r.guide; $("#l-out").innerHTML = md(r.guide); $("#l-meta").innerHTML = agentMeta(r); evidencePanel($("#l-ev"), r); $("#l-actions").hidden = false
+  } catch (err) { $("#l-progress").innerHTML = `<div class="alert">${esc(err.message)}</div>` } finally { $("#l-go").disabled = false }
 }
 
 /* ---------------------------------------------------------- graph helpers */
@@ -377,11 +409,16 @@ async function inspectCode(id) {
   const props = Object.entries(d.props || {}).filter(([, v]) => v !== false && v !== null && v !== "").map(([k, v]) => `<span class="tag">${esc(k)}: ${esc(Array.isArray(v) ? v.join(", ") : v)}</span>`).join("")
   el.innerHTML = `<button class="ghost close" aria-label="Close">✕</button><span class="tag">${esc(d.label)}</span>${props}
     <h3>${esc(short(d.qualified_name))}</h3><p class="muted">${esc(d.file_path || "")}${d.file_path ? `:${d.start_line}-${d.end_line}` : ""}</p>
-    ${d.code ? `<pre class="code">${esc(d.code)}</pre>` : ""}<button class="ghost" id="ego-btn">Show neighbourhood</button>
+    ${d.code ? `<pre class="code">${esc(d.code)}</pre>` : ""}<button class="ghost" id="ego-btn">Show neighbourhood</button> <button class="ghost" id="ask-btn">Ask about this</button>
     ${rel(d.out, "Uses / contains")}${rel(d.in, "Used by")}`
   el.hidden = false
   $(".close", el).onclick = () => (el.hidden = true)
   $("#ego-btn", el).onclick = () => focusCode(id)
+  $("#ask-btn", el).onclick = () => {   // research while coding: what does this do, who uses it, which rules apply
+    $("#a-q").value = `What does ${d.qualified_name} do, who calls it, and which business rules apply to it?`
+    const opt = $(`#a-target option[value="repo:${CSS.escape(proj())}"]`); if (opt) $("#a-target").value = opt.value
+    location.hash = "#ask"
+  }
   $$("a[data-id]", el).forEach((a) => (a.onclick = () => inspectCode(+a.dataset.id)))
 }
 

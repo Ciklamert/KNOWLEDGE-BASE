@@ -29,6 +29,7 @@
   <button data-view="enhance" title="An implementation-ready prompt for a coding agent">Enhance prompt</button>
   <button data-view="srs" title="Software Requirements Specification in plain language">Requirements</button>
   <div class="rail-h">Explore</div>
+  <button data-view="learn" title="How a project is built, and a guide for newcomers">Learn a project</button>
   <button data-view="code">Code graph</button>
   <button data-view="docgraph">Document graph</button>
   <button data-view="documents">Documents</button>
@@ -142,6 +143,26 @@
     <div id="q-ev"></div>
     <h2 class="sub">Written specifications</h2>
     <table class="tbl"><thead><tr><th>Title</th><th>Scope</th><th>Format</th><th>Written</th><th></th></tr></thead><tbody id="q-docs"></tbody></table>
+  </section>
+
+  <!-- ======================================================= learn a project -->
+  <section id="learn" class="view">
+    <header class="page-head"><h1>Learn a project</h1><p class="lede">See how a repository is built (languages, packages, entry points, routes, most-connected code) without any model call, or let the guide agent write an introduction for newcomers: what it does, how it is built, the main flows step by step, where to start reading, key terms and business rules, with sources.</p></header>
+    <div class="box">
+      <div class="row">
+        <label class="inl">Scope <select class="scope-select" id="l-target" title="One repository, or a set: then every repository of the set is covered"></select></label>
+        <label class="inl">Model <select class="model-select" id="l-model" data-role="guide"></select></label>
+        <span class="spacer"></span><button id="l-ov" class="ghost">Show structure</button><button id="l-go">Write project guide</button>
+      </div>
+      <label>Focus (optional)<input id="l-topic" placeholder="e.g. payments and refunds / sipariş akışı"></label>
+    </div>
+    <div id="l-struct"></div>
+    <div id="l-progress"></div>
+    <div id="l-actions" class="row" hidden><button id="l-copy" class="ghost">Copy Markdown</button><button id="l-download" class="ghost">Download .md</button>
+      <button id="l-publish" class="ghost">Add to document graph</button></div>
+    <article id="l-out" class="md wide"></article>
+    <div id="l-meta"></div>
+    <div id="l-ev"></div>
   </section>
 
   <!-- ======================================================= code graph -->

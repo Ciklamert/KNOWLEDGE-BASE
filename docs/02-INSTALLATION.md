@@ -90,7 +90,7 @@ Run `.\brain.cmd doctor` (Windows) or `./brain.sh doctor` (Linux). Every line mu
 
 ## 7. Start
 Run `.\brain.cmd serve` or `./brain.sh serve`. The console prints `READY: code graph, document graph and the
-agents (ask, enhance, requirements) are up` when everything is ready; the first index of large repositories
+agents (ask, enhance, guide, requirements) are up` when everything is ready; the first index of large repositories
 continues in the background. Open `http://<server>:8765` from any machine and log in. The **Overview** page shows
 every component, every job with its progress, and any error with its log.
 

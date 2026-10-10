@@ -178,7 +178,7 @@ def status():
         pipe = {}
     return {"ready": ready, "engines": eng, "llm": STARTUP["llm"], "pipeline": pipe,
             "models": {"default": cfg.get("BRAIN_LLM_MODEL"), "ask": cfg.model("ask"), "enhance": cfg.model("enhance"),
-                       "srs": cfg.model("srs"), "lightrag": cfg.model("lightrag"), "embedding": cfg.get("BRAIN_EMBEDDING_MODEL"),
+                       "srs": cfg.model("srs"), "guide": cfg.model("guide"), "lightrag": cfg.model("lightrag"), "embedding": cfg.get("BRAIN_EMBEDDING_MODEL"),
                        "vision": cfg.get("BRAIN_VLM_MODEL") or None},
             "running": [j for j in jobs.recent(50) if j["state"] == "running"],
             "uptime": round(time.time() - STARTUP["started"])}
@@ -227,7 +227,7 @@ def api_models():
     """Chat models offered by the corporate API (GET /models), for the model comboboxes; falls back to the
     configured ones when the gateway does not list models."""
     configured = [m for m in dict.fromkeys([cfg.get("BRAIN_LLM_MODEL"), cfg.model("ask"), cfg.model("enhance"),
-                                            cfg.model("srs")]) if m]
+                                            cfg.model("srs"), cfg.model("guide")]) if m]
     try:
         listed = llm.models()
         error = None
@@ -236,7 +236,8 @@ def api_models():
     embed = cfg.get("BRAIN_EMBEDDING_MODEL")
     models = [m for m in dict.fromkeys(configured + listed) if m and m != embed]
     return {"models": models, "listed": bool(listed), "error": error,
-            "defaults": {"ask": cfg.model("ask"), "enhance": cfg.model("enhance"), "srs": cfg.model("srs")}}
+            "defaults": {"ask": cfg.model("ask"), "enhance": cfg.model("enhance"), "srs": cfg.model("srs"),
+                         "guide": cfg.model("guide")}}
 
 
 @app.post("/api/analyze")
@@ -251,7 +252,7 @@ async def api_search(body: dict = Body(...)):
     if not str(body.get("query", "")).strip():
         raise HTTPException(400, "query is required")
     r = await _run(search.search, body["query"], body.get("scope", "all"), *_scope(body), k=body.get("k"))
-    return {**r, "markdown": search.render(r, 60000)}
+    return {**r, "markdown": search.render(r, 60000, body.get("detail"))}
 
 
 def _agent(kind: str, body: dict, fn):
@@ -279,6 +280,18 @@ async def api_enhance(body: dict = Body(...)):
     return await _run(_agent, "enhance", body, lambda log=lambda *a, **k: None: agents.enhance(
         p, *_scope(body), repo=body.get("repo"), base_commit=body.get("base_commit"),
         changed_files=body.get("changed_files"), model=body.get("model") or None, log=log))
+
+
+@app.post("/api/guide")
+async def api_guide(body: dict = Body(...)):
+    """A project guide for newcomers (background job unless "async": false)."""
+    set_name, rn, _ = _scope(body)
+
+    def fn(log=lambda *a, **k: None):
+        return agents.guide(str(body.get("topic") or ""), set_name, rn, model=body.get("model") or None, log=log)
+    if body.get("async", True):
+        return {"job": jobs.start("guide", f"Project guide: {body.get('target') or 'all'}", lambda j: fn(log=j.log)).id}
+    return await _run(fn)
 
 
 @app.post("/api/drift")
@@ -368,17 +381,45 @@ async def code_find(q: str, project: str | None = None):
     return await _run(providers.code().find, q, projects, 25)
 
 
+def _code_ctx(target: str = "", repo: str = "") -> "agents.Context":
+    return agents.Context(*_scope({"target": target, "repos": repo}))
+
+
+@app.get("/api/code/symbol")
+async def code_symbol(name: str, target: str = "", repo: str = "", source: str = "auto"):
+    """A symbol by name: location, signature, source, callers, callees (Markdown)."""
+    return {"text": await _run(lambda: _code_ctx(target, repo).run_tool("symbol", {"name": name, "source": source}))}
+
+
+@app.get("/api/code/outline")
+async def code_outline(path: str, target: str = "", repo: str = ""):
+    """Declarations of one file with line ranges (Markdown)."""
+    return {"text": await _run(lambda: _code_ctx(target, repo).run_tool("outline", {"path": path}))}
+
+
+@app.get("/api/code/overview")
+async def code_overview(repo: str, path: str = "", aspects: str = "overview"):
+    """A repository's structure (Markdown); aspects: comma list of overview, structure, routes, hotspots,
+    entry_points, dependencies, layers, file_tree."""
+    a = {"repo": repo, "path": path or None, "aspects": [x for x in aspects.split(",") if x]}
+    return {"text": await _run(lambda: _code_ctx("", repo).run_tool("overview", a))}
+
+
 @app.get("/api/code/read")
-async def code_read(repo: str, path: str, start: int = 1, end: int | None = None):
-    """Numbered lines of a file in an indexed repository (max 400): the knowledge-base replacement for `read`."""
-    return await _run(lambda: providers.code().read(agents.Context(None, [repo]).project(repo), path, start, end))
+async def code_read(path: str, repo: str = "", target: str = "", start: int = 1, end: int | None = None):
+    """Numbered lines of a file in an indexed repository (max 400): the knowledge-base replacement for `read`.
+    Without `repo`, the first repository of the scope that has the file is used."""
+    def run():
+        ctx = _code_ctx(target, repo)
+        return ctx._first(repo or None, lambda p: providers.code().read(p, path, start, end))
+    return await _run(run)
 
 
 @app.get("/api/code/files")
 async def code_files(pattern: str = "*", target: str = "", repo: str = ""):
     """Indexed file paths matching a glob in one repository or a set: the replacement for `glob`."""
     def run():
-        ctx = agents.Context(*_scope({"target": target, "repos": repo}))
+        ctx = _code_ctx(target, repo)
         return [f"{p}/{f}" for p in ctx.projects for f in providers.code().files(p, pattern)]
     return {"files": await _run(run)}
 
@@ -388,8 +429,8 @@ async def code_grep(body: dict = Body(...)):
     """Exact text / regex search over the indexed code, ranked by the code graph: the replacement for `grep`."""
     if not str(body.get("pattern", "")).strip():
         raise HTTPException(400, "pattern is required")
-    return {"text": await _run(lambda: agents.Context(*_scope(body)).run_tool(
-        "grep", {"pattern": body["pattern"], "regex": body.get("regex"), "file_pattern": body.get("file_pattern")}))}
+    args = {k: body.get(k) for k in ("pattern", "regex", "file_pattern", "mode", "path")}
+    return {"text": await _run(lambda: agents.Context(*_scope(body)).run_tool("grep", args))}
 
 
 # ---------------------------------------------------------------- documents
@@ -633,7 +674,7 @@ def main() -> None:
             time.sleep(2)
             st = status()
             if st["ready"]:
-                log.info("READY: code graph, document graph and the agents (ask, enhance, requirements) are up (%.0fs)", time.time() - t0)
+                log.info("READY: code graph, document graph and the agents (ask, enhance, guide, requirements) are up (%.0fs)", time.time() - t0)
                 return
         log.warning("not fully ready after 15 min; open the UI Overview page for details")
     threading.Thread(target=announce, daemon=True).start()

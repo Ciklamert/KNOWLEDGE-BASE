@@ -231,6 +231,7 @@ def write(topic: str, set_name: str | None = None, repo_names: list[str] | None 
           language: str | None = None, model: str | None = None, title: str | None = None,
           log=lambda *a, **k: None) -> dict:
     t0 = time.time()
+    llm.start_meter()
     deadline = t0 + cfg.get("BRAIN_SRS_TIMEOUT")
     model = model or cfg.model("srs")
     lang = _language(topic, language)
@@ -344,7 +345,7 @@ def write(topic: str, set_name: str | None = None, repo_names: list[str] | None 
     (_odir() / f"{name}.md").write_text(md, encoding="utf-8")
     meta = {"title": title, "topic": topic, "scope": scope_text, "template": template, "language": lang,
             "model": model, "capabilities": [c["name"] for c in caps], "errors": errors,
-            "seconds": round(time.time() - t0, 1)}
+            "usage": llm.read_meter(), "seconds": round(time.time() - t0, 1)}
     (_odir() / f"{name}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
     log("done", 1.0)
     return {"name": name, "markdown": md, "evidence": search.evidence(seed), "analysis": seed["analysis"], **meta}

@@ -49,7 +49,7 @@ short traceback on error. The last 200 jobs stay in memory.
 
 ## 4. brain/llm.py
 `chat(messages, model, timeout, max_tokens, temperature, tools)` returns the assistant message (content,
-tool_calls). `embed(texts)` uses `BRAIN_EMBEDDING_BASE_URL`/`_API_KEY` when set. `models()` lists `GET /models`
+tool_calls) and adds the call's token usage to the current thread's meter (`start_meter()`, `read_meter()`). `embed(texts)` uses `BRAIN_EMBEDDING_BASE_URL`/`_API_KEY` when set. `models()` lists `GET /models`
 (cached for a minute). `check()` makes one tiny chat call and one embedding call and reports the real vector size.
 Errors are `LLMError` with the HTTP status, which the agent loop uses to detect gateways without tool calling. TLS:
 `BRAIN_CA_BUNDLE`, `BRAIN_VERIFY_TLS`; proxies from the environment are honoured.
@@ -76,6 +76,13 @@ the current setting, start). The loader accepts a module name in `brain/provider
 - `remove()`: `delete_project`, then it deletes `<project>.db`, `-wal` and `-shm` itself after stopping the query
   process (Windows cannot delete open files). Fact: version 0.11 answers `not_found` for caches under non-ASCII
   paths such as `Masaüstü`.
+- `tidy()`: removes the engine's paging and timing fields (`total_*`, `*_offset`, `limit`, `has_more: false`,
+  `elapsed_ms` …) from tool answers, so agents do not pay tokens for them.
+- `exact()`: symbols whose name or qualified-name tail equals an identifier of the question, and the main symbols of
+  a named file; search ranks them first.
+- `symbol()`: one symbol compactly: location, signature, docstring, source (`auto` = whole up to 60 lines, else 40;
+  `full` up to 400; `none`), callers, callees, parents, tests (15 names each), other matches as one line each.
+- `outline()`: the engine's `get_file_outline` (declarations with line ranges).
 - `search()`: per project `search_graph` with the keywords (BM25) and with `semantic_query` (first 8 key terms,
   bundled code model), fused by reciprocal rank (k = 60); `matched` records which list found each hit.
 - `hits_for()`: tests ×0.5, symbols under three lines ×0.6, skips folders, files, variables and external symbols.
@@ -86,10 +93,11 @@ the current setting, start). The loader accepts a module name in `brain/provider
 - `neighbors()`: graph expansion over CALLS, INHERITS, IMPLEMENTS, OVERRIDE, HTTP_CALLS, ASYNC_CALLS, DATA_FLOWS.
 - `annotate()`: signature, up to 6 callers and callees, up to 4 parents.
 - `files()` (glob over the `file_hashes` table, at most 300), `read()` (at most 400 lines, numbered, path-guarded),
-  `grep()` (the engine's `search_code`, graph-ranked).
+  `grep()` (the engine's `search_code`, graph-ranked; modes files / matches / full, folder filter, size limit).
 - `relations()`, `find()`, `symbol()`, `node()`, `graph()` (lifts method-level edges to their owning classes,
   cached by database modification time), `ego()`: read-only SQL on the engine's SQLite file (`mode=ro`).
-- `tool()`: maps `trace`, `snippet`, `architecture`, `query_graph`, `file_outline` to the engine's tools.
+- `tool()`: maps `trace`, `snippet`, `architecture`, `query_graph`, `file_outline` to the engine's tools and passes
+  `BRAIN_TOOL_MAX_TOKENS` to the ones that accept a size limit.
 
 ## 8. brain/providers/lightrag.py
 - `child_env()`: maps `BRAIN_*` and `LIGHTRAG_*` settings to LightRAG's variables (`LLM_BINDING_HOST`,
@@ -140,17 +148,21 @@ dimension). `search(query_vector, projects, k)` is a NumPy dot product; `remove(
 
 ## 12. brain/search.py
 `search()` runs the pipeline of [05](05-SEARCH-ASK-ENHANCE.md) §3: analysis, parallel recall (code engine,
-code vectors, LightRAG), `_bridge_terms()` (document → code), `neighbors()` (graph expansion), `rerank()` (cached
-corporate embeddings, 20,000 entries), `_diversify()` (repository balance), `annotate()`. `_merge()` fuses hit lists
-by reciprocal rank and unites `matched`; `_tag()` labels a list. `render()` turns a result into Markdown within a
+code vectors, LightRAG), `exact()` (named symbols), `_bridge_terms()` (document → code), `neighbors()` (graph
+expansion), `rerank()` (cached corporate embeddings, 20,000 entries), `_pin()` (named symbols first), `_diversify()`
+(repository balance), `annotate()`. `_merge()` fuses hit lists by reciprocal rank and unites `matched`; `_tag()`
+labels a list. `render()` turns a result into Markdown at a detail level (`LEVELS`: brief, normal, full) within a
 size budget; `sources()` lists citations; `evidence()` is the compact copy for the UI's evidence panels.
 
 ## 13. brain/agents.py
-Prompts `GROUNDING`, `TOOL_GUIDE`, `ASK_SYSTEM`, `ENHANCE_SYSTEM`, `EXPAND_SYSTEM` ([ADR-022](decisions/ADR-022-prompt-design.md));
-`expand()` (one short call for extra search terms; returns `[]` on any error); `TOOLS` (OpenAI function schemas of
-the ten tools); `Context` (the scope: projects, `describe()` for the model, `run_tool()`); `run_agent()` (the loop:
-deadline, step limit, at most 4 tools per round, 8,000 characters per tool result, switch to one grounded call on
-HTTP 400/404/422/501 in `auto` mode); `ask()`, `enhance()`, `fallback_prompt()`.
+Prompts `GROUNDING`, `TOOL_GUIDE`, `ASK_SYSTEM`, `ENHANCE_SYSTEM`, `GUIDE_SYSTEM`, `EXPAND_SYSTEM`
+([ADR-022](decisions/ADR-022-prompt-design.md)); `expand()` (one short call for extra search terms; returns `[]` on
+any error); `TOOLS` (OpenAI function schemas of the ten tools); `cap()` (cuts a tool answer at
+`BRAIN_TOOL_MAX_TOKENS`); `Context` (the scope: projects, `describe()` for the model, `targets()`, `_first()` (the
+first repository where a file exists), `run_tool()` — also used by MCP and REST, so every surface answers the same
+way); `run_agent()` (the loop: deadline, step limit, at most 4 tools per round, 8,000 characters per tool result,
+repeated identical calls answered with a note, switch to one grounded call on HTTP 400/404/422/501 in `auto` mode);
+`ask()`, `enhance()`, `guide()`, `fallback_prompt()`.
 
 ## 14. brain/srs.py
 The requirements writer ([17](17-REQUIREMENTS-WRITER.md)): `SRS_SYSTEM`, `PLAN_SYSTEM`, `DEFAULT_TEMPLATE`; formats
@@ -175,8 +187,9 @@ conflict-risk files, and returns ordered recommendations ([10](10-BRANCH-DRIFT.m
 (exact, then the last two path parts), `LOG` (the last 50 deliveries).
 
 ## 18. brain/mcp.py
-`TOOLS` (15 tools with JSON schemas), `call_tool()`, `handle()` (`initialize` with version negotiation and
-instructions, `ping`, `tools/list`, `tools/call`; notifications get no reply, so the HTTP answer is 202).
+`TOOLS` (16 tools with terse JSON schemas; the scope arguments are explained once in `INSTRUCTIONS`),
+`call_tool()` (code tools go through `agents.Context.run_tool`), `handle()` (`initialize` with version negotiation
+and instructions, `ping`, `tools/list`, `tools/call`; notifications get no reply, so the HTTP answer is 202).
 
 ## 19. brain/server.py
 `boot()` (webhook secrets, three start-up jobs, initial and interval sync), the `guard` middleware (public paths,
@@ -184,7 +197,7 @@ instructions, `ping`, `tools/list`, `tools/call`; notifications get no reply, so
 non-loopback addresses, the selector event loop on Windows, TLS, the `READY` announcer).
 
 ## 20. brain/ui/
-`index.html` (login and the eleven pages), `app.js` (API helper that adds the CSRF header, job follower, a small
+`index.html` (login and the twelve pages), `app.js` (API helper that adds the CSRF header, job follower, a small
 Markdown renderer, prompt-analysis chips, the shared result renderer and evidence panel, force-graph wrappers, one
 init/refresh pair per page), `style.css` (light and dark colour tokens, responsive layout),
 `vendor/force-graph.min.js` (MIT, v1.52.0).

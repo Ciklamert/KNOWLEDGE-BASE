@@ -18,7 +18,7 @@ MCP or a REST API. The only outbound connection is to the organisation's **OpenA
  │ login and tokens · background jobs with progress · settings (.env) · repositories (repos.json)│
  │                                                                                             │
  │  search (no model call) ─┬─► code graph + code vectors ─► codebase-memory-mcp (native binary)│
- │  ask agent ──────────────┤   multilingual code vectors  ─► data/codevec (corporate embeddings)│
+ │  ask agent, guide ───────┤   multilingual code vectors  ─► data/codevec (corporate embeddings)│
  │  enhance-prompt agent ───┤                                                                  │
  │  requirements writer ────┴─► document graph ─────────────► LightRAG (child on 127.0.0.1)     │
  │  branch drift check · branch overlays · webhook-driven updates of the tracked branch         │
@@ -35,7 +35,8 @@ MCP or a REST API. The only outbound connection is to the organisation's **OpenA
 | **Ask** | An agent researches with read-only tools and answers in the question's language, citing code (`repo/path:line`) and documents. | expansion + a few |
 | **Enhance prompt** | An agent turns a short request into an implementation-ready prompt for a coding agent: task, context, business rules, impact, plan, acceptance criteria, out of scope, open questions, branch warnings. | expansion + a few |
 | **Requirements writer** | Writes a Software Requirements Specification in plain language from code and documents, following an editable Markdown format. | several per capability |
-| **Code tools for agents** | `read`, `grep`, `files`, `symbol`, `trace`, `snippet`: agents work across all repositories without a local checkout. | none |
+| **Code tools for agents** | `symbol`, `outline`, `read`, `grep`, `files`, `trace`, `overview`: exact answers in a few hundred tokens, across all repositories, without a local checkout. | none |
+| **Learn a project** | The structure of a repository (languages, packages, entry points, routes, most-connected code) and a written guide for newcomers: what it does, how it is built, main flows, where to start reading. | none / a few |
 | **Branch drift** | Compares a developer's branch with the indexed `main` and recommends what to do (rebase, trust local files, index the branch). | none |
 
 Every function is available in the **web UI**, the **REST API** and **MCP**. The UI also shows both graphs, uploads
@@ -69,9 +70,10 @@ documents under **Documents** and connect your agents (`brain connect`). The ful
 | `brain serve` | start the server: UI, REST API, MCP, webhooks, both engines and the agents |
 | `brain doctor` | check Python, configuration, corporate API, code engine, LightRAG, packages, git and repositories |
 | `brain sync [REPO]` | update and re-index one repository, or all of them |
-| `brain search "…" [--scope all\|code\|semantic\|docs] [--set S] [--branch B]` | search from a terminal |
+| `brain search "…" [--scope all\|code\|semantic\|docs] [--detail brief\|normal\|full] [--set S] [--branch B]` | search from a terminal |
 | `brain ask "…" [--set S] [--branch B]` | ask a question |
 | `brain enhance "…" [--set S] [--path .] [--repo R]` | enhance a prompt; `--path` adds branch-drift notes from a local checkout |
+| `brain guide ["focus"] [--set S] [--repo R]` | write a project guide for newcomers |
 | `brain drift [PATH] [--repo R] [--main main]` | compare the branch checked out in PATH with the indexed `main` |
 | `brain connect [claude\|opencode\|pi\|all]` | print ready-to-paste agent configuration |
 | `brain version` | print the version |
@@ -107,4 +109,4 @@ documents under **Documents** and connect your agents (`brain connect`). The ful
 | [docs/17-REQUIREMENTS-WRITER.md](docs/17-REQUIREMENTS-WRITER.md) | the requirements writer and its formats |
 | [docs/18-ENGINE-COMPARISON.md](docs/18-ENGINE-COMPARISON.md) | codebase-memory-mcp compared with graphify and other engines |
 | [docs/19-REVIEW.md](docs/19-REVIEW.md) | review of the whole system, known limits and rating |
-| [docs/decisions/](docs/decisions/README.md) | architecture decision records ADR-001 to ADR-023 |
+| [docs/decisions/](docs/decisions/README.md) | architecture decision records ADR-001 to ADR-025 |

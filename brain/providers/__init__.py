@@ -87,16 +87,25 @@ class CodeGraph(Engine):
         """Numbered lines of an indexed file (the replacement for `read`)."""
         raise ValueError("reading files is not supported by this code provider")
 
-    def grep(self, project: str, pattern: str, regex: bool = False, file_pattern: str | None = None, limit: int = 30) -> str:
+    def grep(self, project: str, pattern: str, regex: bool = False, file_pattern: str | None = None, limit: int = 30,
+             mode: str = "matches", path: str | None = None) -> str:
         """Text / regex search over the indexed source (the replacement for `grep`)."""
         raise ValueError("text search is not supported by this code provider")
 
-    def symbol(self, name: str, projects: list[str]) -> str:
-        """Markdown: definition, source, callers, callees of a symbol."""
+    def symbol(self, name: str, projects: list[str], source: str = "auto") -> str:
+        """Markdown: location, signature, source (auto | full | none), callers, callees of a symbol."""
         return "symbol lookup is not supported by this code provider"
 
+    def exact(self, terms: list[str], projects: list[str], limit: int = 10) -> list[dict]:
+        """Hits whose name equals an identifier, or that live in a file path, named in the question."""
+        return []
+
+    def outline(self, project: str, path: str) -> str:
+        """Declarations of one file with line ranges (read it before reading lines)."""
+        raise ValueError("file outlines are not supported by this code provider")
+
     def tool(self, name: str, args: dict) -> str:
-        """Engine-specific deep tools for agents: trace, snippet, architecture (overview), query_graph, file_outline."""
+        """Engine-specific deep tools: trace, snippet, architecture (overview), query_graph, file_outline."""
         raise ValueError(f"tool {name} is not supported by this code provider")
 
     def graph(self, project: str, limit: int = 1200) -> dict:

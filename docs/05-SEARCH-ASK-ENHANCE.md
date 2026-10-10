@@ -1,7 +1,7 @@
 # 05 - Search, ask and enhance
 
-Search, Ask, Enhance prompt and the Requirements writer all run on the same search. This document explains it
-from the first step to the agents' output. The Requirements writer is described in
+Search, Ask, Enhance prompt, the Project guide and the Requirements writer all run on the same search. This document
+explains it from the first step to the agents' output. The Requirements writer is described in
 [17-REQUIREMENTS-WRITER.md](17-REQUIREMENTS-WRITER.md).
 
 ## 1. Common inputs
@@ -57,10 +57,11 @@ retrieved material, and every search they make with their tools is analysed the 
 |---|---|---|---|
 | 1 | **Query expansion** (agents only) | Ask, enhance and the requirements writer first make one short model call that returns up to 10 extra search terms: likely English code identifiers, translations (Turkish ↔ English) and synonyms. They are added after the user's own key terms and shown as "expanded". On error or timeout the search continues without them. | `BRAIN_QUERY_EXPANSION`, `BRAIN_QUERY_EXPANSION_TIMEOUT` |
 | 2 | **Recall, in parallel** | (a) Code engine, per repository: BM25 over names, qualified names, paths and bodies plus a vector search with its bundled code model, fused by reciprocal rank (`1/(60+rank)`). (b) The multilingual code vector index (`brain/codevec.py`), when `BRAIN_CODE_VECTORS=both`. (c) LightRAG `/query/data` in `LIGHTRAG_QUERY_MODE` (default `mix`: entities, relations and chunk vectors) with the keywords supplied, so LightRAG makes **no chat call**. The candidate pool is `BRAIN_RERANK_CANDIDATES` (default 30). | `BRAIN_CODE_VECTORS`, `LIGHTRAG_TOP_K` |
+| 2b | **Exact names** | Identifiers and file paths written in the question (`apply_vat`, `InvoiceService.create_invoice`, `src/billing/tax.py`) are looked up directly: symbols with that name or qualified-name tail, and the main symbols of that file. They are tagged "exact name" or "file path" and always ranked first, because the user is pointing at them. | always on |
 | 3 | **Document → code bridge** | Entity names from the document results ("Payment Gateway", "Retry Policy") become extra code-search terms (`Payment`, `Gateway`, `PaymentGateway`). The extra hits are merged at half weight and tagged "document terms". | `BRAIN_DOC_BRIDGE` |
 | 4 | **Code-graph expansion** | Callers, callees, parents and implementations of the best `BRAIN_GRAPH_EXPAND_TOP` (default 5) hits join the candidates at half weight, tagged for example "code graph: called by charge". This finds code wired to the matches even when it shares no words with the question. | `BRAIN_GRAPH_EXPAND`, `BRAIN_GRAPH_EXPAND_TOP` |
 | 5 | **Re-ranking by meaning** | The prompt, every code candidate (kind, name, path and source) and every document passage are embedded with the corporate multilingual embedding model. Final order = `BRAIN_RERANK_WEIGHT` (default 0.6) × similarity + the rest × lexical rank. Embeddings are cached in memory (20,000 texts). | `BRAIN_RERANK`, `BRAIN_RERANK_WEIGHT` |
-| 6 | **Final result** | Repository balance (every repository with hits keeps one or two places), the best `BRAIN_SEARCH_TOP_K` (default 8) code hits with up to 40 source lines each, annotations from the graph (signature, up to 6 callers and callees, up to 4 parents), relations between the hits, and the best `BRAIN_SEARCH_DOC_CHUNKS` (default 6) passages. | `BRAIN_SEARCH_TOP_K`, `BRAIN_SEARCH_DOC_CHUNKS` |
+| 6 | **Final result** | Exact names first, repository balance (every repository with hits keeps one or two places), the best `BRAIN_SEARCH_TOP_K` (default 8) code hits with up to 40 source lines each, annotations from the graph (signature, up to 6 callers and callees, up to 4 parents), relations between the hits, and the best `BRAIN_SEARCH_DOC_CHUNKS` (default 6) passages. | `BRAIN_SEARCH_TOP_K`, `BRAIN_SEARCH_DOC_CHUNKS` |
 
 Ranking details inside the code engine: test files count half (×0.5), symbols of one or two lines count ×0.6, and
 built-in or external symbols without a file are skipped. Each part of the search is bounded by
@@ -79,14 +80,24 @@ Every result combines:
 2. **Code vectors**: the code engine's local code embeddings and the multilingual code vector index;
 3. **Document graph** (LightRAG): passages, entities and facts (relations).
 
-Each code hit carries `matched`, the list of what found it: `keywords`, `code vectors`, `multilingual code
-vectors`, `document terms`, `code graph: …`. The response carries `sources`, the number of hits per source, and
-`pipeline`, the stages that ran. The Markdown rendering (`render()`) gives every code hit its location
-`repo/path:line-line`, kind, name, qualified name, signature, callers, callees, parents, "found by" and source, then
-the code relations, document passages, domain entities and domain facts, and ends with next-step hints for agents
-(`snippet`, `trace`, `read`, `grep`, `files`). Sections are dropped whole when the size budget is reached, the most
-important first; the budget is `BRAIN_CONTEXT_MAX_CHARS` (default 16,000) for the agents' seed, 9,000 per agent tool
-call, 30,000 for MCP `search` and 60,000 for REST `markdown`.
+Each code hit carries `matched`, the list of what found it: `exact name`, `file path`, `keywords`, `code vectors`,
+`multilingual code vectors`, `document terms`, `code graph: …`. The response carries `sources`, the number of hits
+per source, and `pipeline`, the stages that ran.
+
+The Markdown rendering (`render()`, used for agents, MCP and the CLI) gives every code hit its location
+`repo/path:line-line`, kind, qualified name, signature, callers, callees, parents and "found by", then document
+passages, domain entities and domain facts, and ends with next-step hints (`symbol`, `outline`, `read`, `trace`). The
+**detail level** (`BRAIN_SEARCH_DETAIL`, or `detail` per request) decides how much is written:
+
+| Detail | Source code | Relations | Passage length | Typical size (8 hits) |
+|---|---|---|---|---|
+| `brief` | none | none | 300 characters | ≈ 500 tokens |
+| `normal` (default) | the 3 best hits, 15 lines each | 10 | 600 characters | ≈ 1,000 tokens |
+| `full` | every hit, 30 lines each | 25 | 1,000 characters | ≈ 1,700 tokens |
+
+Sections are dropped whole when the size budget is reached, the most important first; the budget is
+`BRAIN_CONTEXT_MAX_CHARS` (default 16,000) for the agents' seed, 9,000 per agent tool call, 30,000 for MCP `search`
+and 60,000 for REST `markdown`. The UI always receives the full JSON.
 
 ## 5. Search (no chat call)
 
@@ -94,7 +105,8 @@ call, 30,000 for MCP `search` and 60,000 for REST `markdown`.
 
 Response: `query`, `scope`, `analysis`, `pipeline`, `sources`, `code[]` (each with `project`, `qn`, `name`,
 `label`, `path`, `line1`, `line2`, `code`, `matched`, `signature`, `callers`, `callees`, `parents`, `similarity`,
-`rerank`), `relations[]`, `docs` (`chunks`, `entities`, `relations`), `projects`, `errors`, `ms` and `markdown`.
+`rerank`), `relations[]`, `docs` (`chunks`, `entities`, `relations`), `projects`, `errors`, `ms` and `markdown`
+(rendered at the requested `detail`).
 
 "No chat call" means no chat-completion call. Search makes embedding calls: one for the query in LightRAG, one
 for the multilingual code vectors and one batched call for re-ranking (cached).
@@ -136,15 +148,36 @@ when needed, **Gaps and conflicts**. Code is cited as `repo/path:line-line`, doc
 
 Fallback: without a model the answer explains why and contains the most relevant search results.
 
-Response: `answer`, `model`, `llm`, `analysis`, `sources`, `evidence`, `steps`, `errors`, `ms`.
+Response: `answer`, `model`, `llm`, `analysis`, `sources`, `evidence`, `steps`, `errors`, `usage`, `ms`.
+
+## 7b. Project guide
+
+`brain/agents.py` `guide()`; `POST /api/guide`, `brain guide`, UI **Learn a project**.
+
+An introduction for newcomers to one repository or a set, optionally focused on a topic:
+1. the architecture overview of every repository in scope (at most 6): languages, packages, entry points, routes,
+   hotspots;
+2. a seed search for the topic, or for "purpose, main entry points, core business logic and main flows";
+3. the agent loop with the guide prompt and limits `BRAIN_GUIDE_MODEL`, `BRAIN_GUIDE_MAX_STEPS` (5),
+   `BRAIN_GUIDE_TIMEOUT` (300 s), `BRAIN_GUIDE_MAX_TOKENS` (3000), `BRAIN_GUIDE_TEMPERATURE` (0.2);
+4. output sections: **What it is**, **How it is built**, **Main flows** (numbered steps from the entry point, each
+   cited), **Where to start reading** (5-10 files or symbols in reading order), **Key concepts** (term, meaning,
+   where in the code), **Business rules**, **Good to know**.
+
+Without a model the response contains the architecture overviews and the search results. The UI can copy, download
+or add the guide to the document graph, so later searches find it.
+
+Response: `guide`, `model`, `llm`, `architecture`, `analysis`, `sources`, `evidence`, `steps`, `errors`, `usage`, `ms`.
 
 ## 8. The agent loop and its tools
 
-One loop (`run_agent`) serves ask, enhance and the requirements writer:
+One loop (`run_agent`) serves ask, enhance, the project guide and the requirements writer:
 1. The message is built material first and request last: `<scope>` (which repositories, and for a set the
    instruction to look at every one), `<prompt_analysis>`, `<knowledge_base>` (the rendered seed search), extra
    blocks (branch freshness), then the request in its own tag.
-2. The model may call tools, at most 4 per round; each tool result is cut at 8,000 characters.
+2. The model may call tools, at most 4 per round; each tool result is cut at 8,000 characters. A call identical to
+   an earlier one in the same run is answered with "(same call as step N: its result is above)" instead of the same
+   text again.
 3. When the step limit is reached or less than 15 seconds remain, the model is asked for the final answer
    without tools. Each model call is also bounded by `BRAIN_LLM_TIMEOUT`.
 
@@ -152,18 +185,24 @@ Read-only tools (OpenAI function calling):
 
 | Tool | Does |
 |---|---|
-| `search(query, scope, repo)` | the full search of section 3 (`scope`: all, code, semantic, docs) |
+| `search(query, scope, detail, repo)` | the full search of section 3 (`scope`: all, code, semantic, docs) |
 | `semantic(query, repo)` | code by meaning only |
 | `docs(query)` | documents only |
-| `symbol(name)` | definition, source, callers and callees of a class, function or method |
+| `symbol(name, source, repo)` | location, signature, source (`auto`: whole when 60 lines or less, else 40 lines), callers, callees, parents, other matches |
 | `trace(function_name, direction, repo)` | call chain, inbound, outbound or both (depth 3) |
-| `snippet(qualified_name, repo)` | full source of a symbol |
-| `read(repo, path, start, end)` | numbered lines of any indexed file (at most 400) |
-| `grep(pattern, regex, file_pattern, repo)` | exact text or regex over the indexed code, ranked by the graph, per repository |
+| `outline(path, repo)` | declarations of one file with line ranges |
+| `read(path, start, end, repo)` | numbered lines of any indexed file (at most 400) |
+| `grep(pattern, regex, mode, file_pattern, path, repo)` | exact text or regex, ranked by the graph; `mode=files` only locates |
 | `files(pattern, repo)` | indexed file paths matching a glob such as `**/*.sql` |
-| `overview(repo)` | architecture of one repository: languages, packages, entry points, routes, hotspots |
+| `overview(repo, path, aspects)` | a repository's structure: languages, packages, entry points, routes, hotspots, file tree |
 
-Without `repo`, `grep` and `files` run over every repository in scope.
+Without `repo`, `grep` and `files` run over every repository in scope, and `read` and `outline` use the first
+repository that has the file. `symbol`, `outline`, `read`, `grep`, `trace` and `overview` answers are cut at
+`BRAIN_TOOL_MAX_TOKENS` (≈ 4 characters per token) with a note saying how to get the rest, and the code engine's paging
+and timing fields are removed from them.
+
+Every run counts its model calls and tokens (`usage`: `calls`, `prompt_tokens`, `completion_tokens`, as reported by
+the gateway); the UI shows them under each answer.
 
 ### Gateways without tool calling
 `BRAIN_AGENT_TOOL_CALLING`:
@@ -179,10 +218,11 @@ Without `repo`, `grep` and `files` run over every repository in scope.
 | search | 0 | 1 (documents) + 1 (code vectors) + 1 batched (re-ranking, cached) | 0.5-3 s |
 | ask | 1 expansion + 1 to 1 + `BRAIN_ASK_MAX_STEPS` | as search, plus one search per `search`/`semantic`/`docs` tool call | 5-60 s, at most `BRAIN_ASK_TIMEOUT` |
 | enhance | 1 expansion + 1 to 1 + `BRAIN_ENHANCE_MAX_STEPS` | as ask | 5-45 s, at most `BRAIN_ENHANCE_TIMEOUT` |
+| project guide | 1 expansion + 1 to 1 + `BRAIN_GUIDE_MAX_STEPS` | as ask | 10-120 s, at most `BRAIN_GUIDE_TIMEOUT` |
 | requirements | about 2 + capabilities + sections, each with up to 3 tool rounds | one search per capability | minutes, at most `BRAIN_SRS_TIMEOUT` |
 
 ## 10. Synchronous and background use
 Agents and scripts call the endpoints synchronously and wait for the result. The UI sends `"async": true`,
 receives a job id, and polls `/api/jobs/{id}` to show each step ("analysing the request", "model-expanded search
 terms", "searching code and documents", "found N code hits in M repositories", "asking the model" …). The
-requirements writer runs as a background job by default.
+requirements writer and the project guide run as background jobs by default.

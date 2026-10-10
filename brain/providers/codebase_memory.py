@@ -35,9 +35,18 @@ REL_EDGES = ("CALLS", "INHERITS", "IMPLEMENTS", "OVERRIDE", "HTTP_CALLS", "ASYNC
 SKIP_LABELS = ("Folder", "Project", "Branch", "Variable", "Field", "Section", "File")
 TESTY = re.compile(r"(^|/)(tests?|__tests__|spec|testing)(/|$)|Tests?\.|_test\.|\.spec\.|\.test\.", re.I)
 TOOLS = {  # agent-facing deep tools -> CBM tool names
-    "trace": "trace_path", "snippet": "get_code_snippet", "search_code": "search_code",
-    "query_graph": "query_graph", "architecture": "get_architecture", "file_outline": "get_file_outline",
+    "trace": "trace_path", "snippet": "get_code_snippet", "query_graph": "query_graph",
+    "architecture": "get_architecture", "file_outline": "get_file_outline",
 }
+
+
+NOISE = re.compile(r"^\s*(?:total\w*|\w*offset|limit|returned|\w+_returned|raw_\w+|directories_\w+|elapsed_ms|"
+                   r"dedup_ratio|\w+_ms|file_path)\s*:\s*\S*\s*$|^\s*(?:\w*has_more|truncated)\s*:\s*false\s*$")
+
+
+def tidy(text: str) -> str:
+    """Drop the engine's paging and timing fields (they cost agent tokens and say nothing); keep has_more: true."""
+    return "\n".join(line for line in text.splitlines() if not NOISE.match(line)).strip()
 
 
 def binary() -> Path:
@@ -423,12 +432,19 @@ class Provider(CodeGraph):
         return {"project": project, "path": path, "start": start, "end": end, "total_lines": len(lines),
                 "text": "\n".join(f"{i:>5}  {lines[i - 1]}" for i in range(start, end + 1))}
 
-    def grep(self, project: str, pattern: str, regex: bool = False, file_pattern: str | None = None, limit: int = 30) -> str:
-        """Graph-ranked text / regex search over the indexed source (the code engine's search_code)."""
-        args = {"pattern": pattern, "project": project, "regex": bool(regex), "mode": "compact", "limit": limit}
+    def grep(self, project: str, pattern: str, regex: bool = False, file_pattern: str | None = None, limit: int = 30,
+             mode: str = "matches", path: str | None = None) -> str:
+        """Graph-ranked text / regex search over the indexed source (the code engine's search_code).
+        mode: files (paths only, cheapest) | matches (symbols with matching lines) | full (bounded source)."""
+        args = {"pattern": pattern, "project": project, "regex": bool(regex), "limit": limit,
+                "mode": {"files": "files", "full": "full"}.get(mode, "compact"),
+                "max_output_tokens": cfg.get("BRAIN_TOOL_MAX_TOKENS")}
         if file_pattern:
             args["file_pattern"] = file_pattern
-        return self.mcp.call("search_code", args, cfg.get("CBM_QUERY_TIMEOUT"))[0]
+        if path:
+            args["path_filter"] = path
+        text = tidy(self.mcp.call("search_code", args, cfg.get("CBM_QUERY_TIMEOUT"))[0])
+        return "" if re.search(r"^(?:results|files): 0\b", text, flags=re.M) else text
 
     def relations(self, hits: list[dict], limit: int = 30) -> list[dict]:
         out, by_proj = [], {}
@@ -460,32 +476,95 @@ class Provider(CodeGraph):
             con.close()
         return out[:limit]
 
-    def symbol(self, name: str, projects: list[str]) -> str:
-        found = self.find(name, projects, 3)
+    def symbol(self, name: str, projects: list[str], source: str = "auto") -> str:
+        """One symbol, compactly: location, signature, source (auto = whole when short, else the first 40 lines),
+        callers, callees, parents; other symbols with the same name as one line each."""
+        last = name.rsplit(".", 1)[-1]
+        found = self.find(last, projects, 8)
+        found = sorted(found, key=lambda f: (f["qualified_name"] != name and not f["qualified_name"].endswith("." + name),
+                                             f["name"] != last))
         if not found:
-            return f"No symbol matching '{name}'. Try search."
-        out = []
-        for f in found:
-            d = self.node(f["project"], f["id"])
-            if not d:
-                continue
-            out.append(f"### {d['label']} `{short(d['qualified_name'])}` — {f['project']}/{d['file_path']}:"
-                       f"{d['start_line']}-{d['end_line']}")
-            if d["props"].get("signature"):
-                out.append("signature: " + str(d["props"]["signature"]))
-            if d["code"]:
-                out.append("```\n" + d["code"] + "\n```")
-            for label, rows in (("calls / uses", d["out"]), ("called / used by", d["in"])):
-                rows = [r for r in rows if r["type"] not in ("DEFINES", "DEFINES_METHOD", "CONTAINS_FILE")]
-                if rows:
-                    out.append(f"{label}: " + "; ".join(f"{r['type']} `{short(r['qname'])}`" for r in rows[:40]))
+            return f"No symbol named '{name}'. Use search (by meaning) or grep (exact text)."
+        best = found[0]
+        d = self.node(best["project"], best["id"])
+        if not d:
+            return f"No symbol named '{name}'."
+        lines = (d["end_line"] or 0) - (d["start_line"] or 0) + 1
+        out = [f"### {d['label']} `{short(d['qualified_name'])}` - {best['project']}/{d['file_path']}:{d['start_line']}-{d['end_line']}"
+               f" ({lines} lines; qualified: `{d['qualified_name']}`)"]
+        if d["props"].get("signature"):
+            out.append("signature: " + str(d["props"]["signature"]))
+        if d["props"].get("docstring"):
+            out.append("doc: " + " ".join(str(d["props"]["docstring"]).split())[:300])
+        if source != "none":
+            limit = 400 if source == "full" else (lines if lines <= 60 else 40)
+            code = self.read_lines(best["project"], d["file_path"], d["start_line"], d["start_line"] + limit - 1)
+            if code:
+                more = lines - limit
+                out.append(f"```\n{code}\n```" + (f"\n({more} more lines: symbol(source=full) or read(repo, path, start, end))"
+                                                    if more > 0 else ""))
+        groups = {"called by": [r for r in d["in"] if r["type"].endswith("CALLS")],
+                  "calls": [r for r in d["out"] if r["type"].endswith("CALLS")],
+                  "extends / implements": [r for r in d["out"] if r["type"] in ("INHERITS", "IMPLEMENTS")],
+                  "extended / implemented by": [r for r in d["in"] if r["type"] in ("INHERITS", "IMPLEMENTS")],
+                  "tested by": [r for r in d["in"] if r["type"] == "TESTS"]}
+        for label, rows in groups.items():
+            names = list(dict.fromkeys(short(r["qname"]) for r in rows))
+            if names:
+                out.append(f"{label} ({len(names)}): " + ", ".join(f"`{x}`" for x in names[:15])
+                           + (" …" if len(names) > 15 else ""))
+        others = [f for f in found[1:] if f["qualified_name"] != d["qualified_name"]][:5]
+        if others:
+            out.append("other matches: " + "; ".join(f"`{f['qualified_name']}` {f['project']}/{f['file_path']}:{f['start_line']}"
+                                                     for f in others))
         return "\n".join(out)
+
+    def exact(self, terms: list[str], projects: list[str], limit: int = 10) -> list[dict]:
+        """Symbols whose name or qualified-name tail equals an identifier of the question, and the main symbols of
+        a file path named in it. These are what the user is pointing at, so search ranks them first."""
+        idents = [t for t in terms if "/" not in t and "\\" not in t]
+        paths = [t.replace("\\", "/").lstrip("./") for t in terms if "/" in t or "\\" in t or "." in t.rsplit("/", 1)[-1]]
+        out: list[dict] = []
+        for proj in projects:
+            try:
+                con = self._db(proj)
+            except KeyError:
+                continue
+            scored: dict[str, float] = {}
+            how: dict[str, str] = {}
+            skip = ",".join("?" * len(SKIP_LABELS))
+            for i, t in enumerate(idents):
+                for (qn,) in con.execute(f"""SELECT qualified_name FROM nodes WHERE label NOT IN ({skip})
+                        AND file_path NOT LIKE '<%' AND (name = ? OR qualified_name LIKE ?) LIMIT 5""",
+                                         (*SKIP_LABELS, t, "%." + t)):
+                    scored.setdefault(qn, 2.0 - i * 0.01)
+                    how.setdefault(qn, "exact name")
+            for p in paths:
+                for (qn,) in con.execute(f"""SELECT qualified_name FROM nodes WHERE label IN
+                        ('Class','Interface','Enum','Struct','Trait','Type','Route','Function','Record','Object')
+                        AND (file_path = ? OR file_path LIKE ?) ORDER BY start_line LIMIT 4""", (p, "%/" + p)):
+                    scored.setdefault(qn, 1.0)
+                    how.setdefault(qn, "file path")
+            con.close()
+            for h in self.hits_for(proj, scored):
+                h["matched"] = [how[h["qn"]]]
+                out.append(h)
+        out.sort(key=lambda h: -h["score"])
+        return out[:limit]
+
+    def outline(self, project: str, path: str) -> str:
+        """Declarations of one file with their line ranges: read this before reading lines."""
+        text = self.mcp.call("get_file_outline", {"project": project, "file_path": path.replace("\\", "/").lstrip("./"),
+                                                  "limit": 200}, cfg.get("CBM_QUERY_TIMEOUT"))[0]
+        return tidy(text)
 
     def tool(self, name: str, args: dict) -> str:
         if name not in TOOLS:
             raise ValueError(f"unknown code tool {name}; available: {', '.join(TOOLS)}")
+        if name in ("trace", "snippet"):
+            args = {"max_output_tokens": cfg.get("BRAIN_TOOL_MAX_TOKENS"), **args}
         text, _ = self.mcp.call(TOOLS[name], args, cfg.get("CBM_QUERY_TIMEOUT"))
-        return text
+        return tidy(text)
 
     # ---------------------------------------------------------------- UI graphs
     def node(self, project: str, node_id: int) -> dict | None:

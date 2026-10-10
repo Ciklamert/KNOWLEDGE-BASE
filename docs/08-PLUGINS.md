@@ -34,12 +34,14 @@ A *project* is one indexed tree: a repository (named like the repository) or a b
 | `neighbors(hits, limit)` | no | graph expansion: hits wired to the given hits, each with `matched` saying how |
 | `annotate(hits)` | no | add `signature`, `callers`, `callees`, `parents` |
 | `with_code(hits)` | no | attach source lines as `code` |
+| `exact(terms, projects, limit)` | no | hits whose name (or qualified-name tail) equals an identifier of the question, and the main symbols of a file path named in it; `matched` = `exact name` / `file path` |
+| `outline(project, path)` | no | declarations of one file with line ranges, as text |
 | `symbols(project, limit)` | no | `[{qn, text}]` for every function, class and route: what the multilingual code vector index embeds; `[]` disables that index |
 | `hits_for(project, scored)` | no | `{qualified name: score}` → hits in the `search` shape (used by the code vector index) |
 | `files(project, pattern, limit)` | no | indexed file paths matching a glob |
 | `read(project, path, start, end)` | no | `{project, path, start, end, total_lines, text}` |
-| `grep(project, pattern, regex, file_pattern, limit)` | no | text matches as Markdown |
-| `symbol(name, projects)` | no | Markdown with definition, source, callers and callees |
+| `grep(project, pattern, regex, file_pattern, limit, mode, path)` | no | text matches as text; `mode` = `files`, `matches`, `full`; `path` = folder; empty when nothing matches |
+| `symbol(name, projects, source)` | no | Markdown with location, signature, source (`auto`, `full`, `none`), callers, callees, parents |
 | `tool(name, args)` | no | deep tools as text: `trace`, `snippet`, `architecture` (the `overview` tool), `query_graph`, `file_outline` |
 | `graph(project, limit)`, `ego(project, node_id, depth)`, `node(project, node_id)`, `find(q, projects, limit)` | no | data for the Code graph page |
 

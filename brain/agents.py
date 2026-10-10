@@ -1,11 +1,12 @@
-"""Option (b) the prompt-enhancer agent, option (c) the ask agent, and the shared agent loop the requirements
-writer (brain/srs.py) also uses.
+"""The ask agent, the prompt enhancer, the project guide, and the shared agent loop the requirements writer
+(brain/srs.py) also uses.
 
 Every agent run:
   1. prompt analysis + (optional) model query expansion -> the relevance pipeline (brain/search.py) seeds the
      conversation with grounded context (saves round trips, works even without tool calling);
-  2. the model may call read-only AI-BRAIN tools (search, semantic, docs, symbol, trace, snippet, read,
-     grep, files, overview) for at most MAX_STEPS rounds, within the role's total TIMEOUT;
+  2. the model may call read-only AI-BRAIN tools (search, semantic, docs, symbol, trace, outline, read, grep,
+     files, overview) for at most MAX_STEPS rounds, within the role's total TIMEOUT; a repeated identical call is
+     answered with a short note instead of the same result;
   3. the model writes the final output in the user's language.
 Prompt design follows current guidance for grounded (RAG) agents: role and goal first; retrieved material in
 clearly tagged blocks BEFORE the request (long-context ordering); answer only from the material, cite every
@@ -40,12 +41,14 @@ GROUNDING = """<grounding_rules>
 TOOL_GUIDE = """<tool_use>
 The knowledge base already combined three sources for you: the code graph (symbols, calls, inheritance), the code
 vector indexes (code by meaning) and the document graph (business entities, rules, passages). Each code hit shows
-where it is, why it matched, its signature and its callers/callees. Check whether this answers the request; if
-not, call tools: `search` (all three sources; scope=code|docs|semantic, repo=... for one repository), `semantic`
-(code by meaning, for concepts with unknown names), `docs` (documents only), `symbol` (definition, callers,
-callees), `trace` (call chains for impact), `snippet` (full source of a symbol), `read` (lines of any file),
-`grep` (exact text / regex), `files` (file paths matching a glob), `overview` (architecture of one repository).
-Prefer a few precise calls; stop calling tools as soon as you can answer well.
+where it is, why it matched, its signature and its callers/callees. If that answers the request, do not call tools.
+Otherwise pick the cheapest tool that answers the next question:
+- one symbol's source, callers and callees: `symbol`; call chains for impact: `trace`;
+- a file: `outline` first (declarations with line ranges), then `read` only the lines you need;
+- exact text or regex: `grep` (mode=files to only locate); file paths by glob: `files`;
+- new concepts: `search` (detail=brief to scan widely), `semantic` (code by meaning), `docs` (documents only);
+- a repository's structure: `overview`.
+Use repo=... to target one repository. Stop calling tools as soon as you can answer well.
 </tool_use>"""
 
 ASK_SYSTEM = f"""You are the AI-BRAIN ask agent: a senior engineer and domain analyst who knows this organisation's
@@ -113,43 +116,49 @@ Return ONLY a JSON array of at most 10 short strings, most useful first:
 - close synonyms used in business documents.
 Do not repeat the words already given as key terms. No explanations."""
 
+def _fn(name: str, desc: str, props: dict, required: list[str]) -> dict:
+    return {"type": "function", "function": {"name": name, "description": desc,
+            "parameters": {"type": "object", "properties": props, "required": required}}}
+
+
+_S, _I, _B = {"type": "string"}, {"type": "integer"}, {"type": "boolean"}
 TOOLS = [
-    {"type": "function", "function": {"name": "search", "description": "Search code AND documents (relevance pipeline).",
-     "parameters": {"type": "object", "properties": {"query": {"type": "string"},
-                    "scope": {"type": "string", "enum": ["all", "code", "semantic", "docs"]},
-                    "repo": {"type": "string", "description": "limit to one repository of the scope"}},
-                    "required": ["query"]}}},
-    {"type": "function", "function": {"name": "semantic", "description": "Find code by meaning (concepts whose names you do not know).",
-     "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "repo": {"type": "string"}},
-                    "required": ["query"]}}},
-    {"type": "function", "function": {"name": "docs", "description": "Search only the documents (rules, specs, decisions).",
-     "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
-    {"type": "function", "function": {"name": "symbol",
-     "description": "Definition, source, callers and callees of a class/function/method by name.",
-     "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}}},
-    {"type": "function", "function": {"name": "trace", "description": "Call chain of a function (who calls it / what it calls).",
-     "parameters": {"type": "object", "properties": {"function_name": {"type": "string"},
-                    "direction": {"type": "string", "enum": ["inbound", "outbound", "both"]},
-                    "repo": {"type": "string"}}, "required": ["function_name"]}}},
-    {"type": "function", "function": {"name": "snippet", "description": "Full source of a symbol (qualified or short name).",
-     "parameters": {"type": "object", "properties": {"qualified_name": {"type": "string"}, "repo": {"type": "string"}},
-                    "required": ["qualified_name"]}}},
-    {"type": "function", "function": {"name": "read", "description": "Numbered lines of a file in a repository (max 400).",
-     "parameters": {"type": "object", "properties": {"repo": {"type": "string"}, "path": {"type": "string"},
-                    "start": {"type": "integer"}, "end": {"type": "integer"}}, "required": ["path"]}}},
-    {"type": "function", "function": {"name": "grep", "description": "Exact text or regex search over the code, ranked by the graph.",
-     "parameters": {"type": "object", "properties": {"pattern": {"type": "string"}, "regex": {"type": "boolean"},
-                    "file_pattern": {"type": "string"}, "repo": {"type": "string"}}, "required": ["pattern"]}}},
-    {"type": "function", "function": {"name": "files", "description": "File paths matching a glob, e.g. **/*.sql or src/billing/*.",
-     "parameters": {"type": "object", "properties": {"pattern": {"type": "string"}, "repo": {"type": "string"}},
-                    "required": ["pattern"]}}},
-    {"type": "function", "function": {"name": "overview",
-     "description": "Architecture of one repository: languages, packages, entry points, routes, hotspots.",
-     "parameters": {"type": "object", "properties": {"repo": {"type": "string"}}, "required": ["repo"]}}},
+    _fn("search", "Search code (graph + vectors) and documents.",
+        {"query": _S, "scope": {"type": "string", "enum": ["all", "code", "semantic", "docs"]},
+         "detail": {"type": "string", "enum": ["brief", "normal", "full"]}, "repo": _S}, ["query"]),
+    _fn("semantic", "Find code by meaning (concepts whose names you do not know).", {"query": _S, "repo": _S}, ["query"]),
+    _fn("docs", "Search only the documents (rules, specs, decisions).", {"query": _S}, ["query"]),
+    _fn("symbol", "A symbol by name: location, signature, source, callers, callees.",
+        {"name": _S, "source": {"type": "string", "enum": ["auto", "full", "none"]}, "repo": _S}, ["name"]),
+    _fn("trace", "Call chain of a function (who calls it / what it calls).",
+        {"function_name": _S, "direction": {"type": "string", "enum": ["inbound", "outbound", "both"]}, "repo": _S},
+        ["function_name"]),
+    _fn("outline", "Declarations of one file with line ranges.", {"path": _S, "repo": _S}, ["path"]),
+    _fn("read", "Numbered lines of a file (max 400).", {"path": _S, "start": _I, "end": _I, "repo": _S}, ["path"]),
+    _fn("grep", "Exact text or regex in the code; mode=files lists only the files.",
+        {"pattern": _S, "regex": _B, "mode": {"type": "string", "enum": ["files", "matches", "full"]},
+         "file_pattern": _S, "path": _S, "repo": _S}, ["pattern"]),
+    _fn("files", "File paths matching a glob, e.g. **/*.sql.", {"pattern": _S, "repo": _S}, ["pattern"]),
+    _fn("overview", "A repository's structure: languages, packages, entry points, routes, hotspots, file tree.",
+        {"repo": _S, "path": _S, "aspects": {"type": "array", "items": {"type": "string", "enum": [
+            "overview", "structure", "routes", "hotspots", "entry_points", "dependencies", "layers", "file_tree"]}}},
+        ["repo"]),
 ]
+
+
+def cap(text: str, hint: str = "narrow the request") -> str:
+    """Keep one tool answer within BRAIN_TOOL_MAX_TOKENS (about 4 characters per token)."""
+    limit = cfg.get("BRAIN_TOOL_MAX_TOKENS") * 4
+    if len(text) <= limit:
+        return text
+    cut = text.rfind("\n", 0, limit)
+    return text[:cut if cut > limit // 2 else limit] + f"\n… (cut at about {limit // 4} tokens; {hint})"
+
+
 LIMITS = {   # role -> setting keys (timeout, max steps, max tokens, temperature)
     "ask": ("BRAIN_ASK_TIMEOUT", "BRAIN_ASK_MAX_STEPS", "BRAIN_ASK_MAX_TOKENS", "BRAIN_ASK_TEMPERATURE"),
     "enhance": ("BRAIN_ENHANCE_TIMEOUT", "BRAIN_ENHANCE_MAX_STEPS", "BRAIN_ENHANCE_MAX_TOKENS", "BRAIN_ENHANCE_TEMPERATURE"),
+    "guide": ("BRAIN_GUIDE_TIMEOUT", "BRAIN_GUIDE_MAX_STEPS", "BRAIN_GUIDE_MAX_TOKENS", "BRAIN_GUIDE_TEMPERATURE"),
 }
 _native = {"ok": True}   # flips to False once the gateway rejects `tools` (auto mode)
 
@@ -199,31 +208,56 @@ class Context:
             raise ValueError("no indexed repository in scope")
         return self.projects[0]
 
+    def targets(self, repo: str | None) -> list[str]:
+        return [self.project(repo)] if repo else self.projects
+
+    def _first(self, repo: str | None, fn):
+        """Run fn(project) on the named repository, or on the first repository of the scope where it works."""
+        errors = []
+        for p in self.targets(repo):
+            try:
+                return fn(p)
+            except (KeyError, RuntimeError, ValueError) as exc:
+                errors.append(f"{p}: {exc}")
+        raise KeyError("; ".join(errors) or "no indexed repository in scope")
+
     def run_tool(self, name: str, a: dict) -> str:
         code = providers.code()
-        repo_only = [a["repo"]] if a.get("repo") else self.repo_names
+        repo = a.get("repo") or None
         if name in ("search", "docs", "semantic"):
             scope = "docs" if name == "docs" else "semantic" if name == "semantic" else a.get("scope") or "all"
-            r = search.search(a.get("query", ""), scope, None if a.get("repo") else self.set_name, repo_only, self.branch)
-            return search.render(r, 9000) or "no results"
+            r = search.search(a.get("query", ""), scope, None if repo else self.set_name,
+                              [repo] if repo else self.repo_names, self.branch)
+            return search.render(r, 9000, a.get("detail")) or "no results"
         if name == "symbol":
-            return code.symbol(a.get("name", ""), self.projects)
+            return cap(code.symbol(a.get("name", ""), self.targets(repo), a.get("source") or "auto"),
+                       "use read(repo, path, start, end) for the rest")
         if name == "trace":
-            return code.tool("trace", {"function_name": a["function_name"], "project": self.project(a.get("repo")),
-                                       "direction": a.get("direction") or "both", "depth": 3})
-        if name == "snippet":
-            return code.tool("snippet", {"qualified_name": a["qualified_name"], "project": self.project(a.get("repo"))})
+            return code.tool("trace", {"function_name": a["function_name"], "project": self.project(repo),
+                                       "direction": a.get("direction") or "both", "depth": int(a.get("depth") or 3)})
+        if name == "snippet":   # kept for callers of the engine's own snippet tool
+            return code.tool("snippet", {"qualified_name": a["qualified_name"], "project": self.project(repo)})
         if name == "overview":
-            return code.tool("architecture", {"project": self.project(a.get("repo")), "aspects": ["overview"]})
+            args = {"project": self.project(repo), "aspects": a.get("aspects") or ["overview"]}
+            if a.get("path"):
+                args["path"] = a["path"]
+            return cap(code.tool("architecture", args), "pass path=<folder> or fewer aspects")
+        if name == "outline":
+            return cap(self._first(repo, lambda p: f"{p}/{a['path']}\n" + code.outline(p, a["path"])),
+                       "read the line ranges you need")
         if name == "read":
-            r = code.read(self.project(a.get("repo")), a["path"], a.get("start") or 1, a.get("end"))
-            return f"{r['project']}/{r['path']} lines {r['start']}-{r['end']} of {r['total_lines']}\n{r['text']}"
-        targets = [self.project(a["repo"])] if a.get("repo") else self.projects
+            r = self._first(repo, lambda p: code.read(p, a["path"], a.get("start") or 1, a.get("end")))
+            return cap(f"{r['project']}/{r['path']} lines {r['start']}-{r['end']} of {r['total_lines']}\n{r['text']}",
+                       "read a smaller range")
         if name == "grep":
-            return "\n\n".join(f"## {p}\n" + code.grep(p, a["pattern"], bool(a.get("regex")), a.get("file_pattern"))
-                               for p in targets) or "no indexed repository"
+            found = [(p, code.grep(p, a["pattern"], bool(a.get("regex")), a.get("file_pattern"),
+                                   mode=a.get("mode") or "matches", path=a.get("path"))) for p in self.targets(repo)]
+            return cap("\n\n".join(f"## {p}\n{t}" for p, t in found if t) or "no matches",
+                       "use mode=files, file_pattern= or path=")
         if name == "files":
-            return "\n".join(f"{p}/{f}" for p in targets for f in code.files(p, a.get("pattern") or "*")) or "no files"
+            rows = [f"{p}/{f}" for p in self.targets(repo) for f in code.files(p, a.get("pattern") or "*", 301)]
+            note = "\n… more than 300 files match: narrow the pattern" if len(rows) > 300 else ""
+            return ("\n".join(rows[:300]) + note) if rows else "no files match"
         raise ValueError(f"unknown tool {name}")
 
 
@@ -245,7 +279,7 @@ def run_agent(role: str, system: str, user: str, ctx: Context, seed: dict | None
         parts.append(extra)
     parts.append(user)
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": "\n\n".join(parts)}]
-    steps, errors = [], list((seed or {}).get("errors", []))
+    steps, errors, seen = [], list((seed or {}).get("errors", [])), {}
     use_tools = tools and (mode == "native" or (mode == "auto" and _native["ok"]))
     for step in range(max_steps + 1):
         remaining = deadline - time.time()
@@ -271,7 +305,12 @@ def run_agent(role: str, system: str, user: str, ctx: Context, seed: dict | None
             fn = c.get("function", {})
             try:
                 args = json.loads(fn.get("arguments") or "{}")
-                result = ctx.run_tool(fn.get("name", ""), args)
+                key = (fn.get("name"), json.dumps(args, sort_keys=True))
+                if key in seen:
+                    result = f"(same call as step {seen[key]}: its result is above)"
+                else:
+                    seen[key] = len(steps) + 1
+                    result = ctx.run_tool(fn.get("name", ""), args)
             except Exception as exc:
                 args, result = {}, f"tool error: {exc}"
             steps.append({"tool": fn.get("name"), "args": args, "chars": len(result)})
@@ -297,6 +336,7 @@ def _seed(text: str, role: str, ctx: Context, model: str | None, log) -> dict:
 def ask(question: str, set_name=None, repo_names=None, branch=None, model: str | None = None,
         log=lambda *a, **k: None) -> dict:
     t0 = time.time()
+    llm.start_meter()
     ctx = Context(set_name, repo_names, branch)
     seed = _seed(question, "ask", ctx, model, log)
     log("asking the model", 0.4)
@@ -305,14 +345,14 @@ def ask(question: str, set_name=None, repo_names=None, branch=None, model: str |
                                "). These are the most relevant AI-BRAIN results:\n\n" + search.render(seed))
     return {"answer": answer, "llm": res["llm"], "model": res["model"], "steps": res["steps"],
             "sources": search.sources(seed), "evidence": search.evidence(seed), "analysis": seed["analysis"],
-            "errors": res["errors"],
-            "ms": int((time.time() - t0) * 1000)}
+            "errors": res["errors"], "usage": llm.read_meter(), "ms": int((time.time() - t0) * 1000)}
 
 
 def enhance(prompt: str, set_name=None, repo_names=None, branch=None, repo: str | None = None,
             base_commit: str | None = None, changed_files: list[str] | None = None, model: str | None = None,
             log=lambda *a, **k: None) -> dict:
     t0 = time.time()
+    llm.start_meter()
     ctx = Context(set_name, repo_names, branch)
     seed = _seed(prompt, "enhance", ctx, model, log)
     extra, drift_report = "", None
@@ -329,8 +369,8 @@ def enhance(prompt: str, set_name=None, repo_names=None, branch=None, repo: str 
     enhanced = res["output"] or fallback_prompt(prompt, seed, drift_report)
     return {"enhanced": enhanced, "llm": res["llm"], "model": res["model"], "steps": res["steps"],
             "sources": search.sources(seed), "evidence": search.evidence(seed), "analysis": seed["analysis"],
-            "drift": drift_report,
-            "errors": res["errors"], "ms": int((time.time() - t0) * 1000)}
+            "drift": drift_report, "errors": res["errors"], "usage": llm.read_meter(),
+            "ms": int((time.time() - t0) * 1000)}
 
 
 def fallback_prompt(prompt: str, seed: dict, drift_report: dict | None) -> str:
@@ -346,3 +386,60 @@ def fallback_prompt(prompt: str, seed: dict, drift_report: dict | None) -> str:
         out += ["", "## Notes for the agent", drift.render(drift_report)]
     out += ["", "Verify the listed files in your working copy before editing."]
     return "\n".join(out)
+
+
+GUIDE_SYSTEM = f"""You are the AI-BRAIN project guide: a senior engineer who helps a newcomer understand a codebase
+quickly, from its code graph, its architecture overview and the organisation's documents. Write the guide a new
+team member would want on day one: what the project is for, how it is built, how its main flows work, and where to
+start reading.
+
+{GROUNDING}
+
+{TOOL_GUIDE}
+
+<output_format>
+Markdown, with exactly these sections (omit a section only if the material has nothing for it):
+## What it is
+Purpose, users and main capabilities in 3-6 sentences, in business words.
+## How it is built
+Languages, main modules or services and what each is responsible for; for a set, the role of each repository and how
+they talk to each other (calls, HTTP routes, shared libraries). A short component list, each with its location.
+## Main flows
+The 2-4 most important flows, each as numbered steps from the entry point (route, handler, job) to the result, every
+step cited `repo/path:line`.
+## Where to start reading
+5-10 files or symbols in a good reading order, one line each saying why.
+## Key concepts
+A table "Term | Meaning | Where in the code" for the domain terms.
+## Business rules
+The rules from documents that the code enforces (or should), each cited; note conflicts between code and documents.
+## Good to know
+Conventions, configuration, tests and anything surprising, only when the material shows it.
+</output_format>"""
+
+
+def guide(topic: str = "", set_name=None, repo_names=None, model: str | None = None, log=lambda *a, **k: None) -> dict:
+    """A project guide for newcomers: architecture overview of every repository in scope + a grounded agent run."""
+    t0 = time.time()
+    llm.start_meter()
+    ctx = Context(set_name, repo_names)
+    log("reading the architecture of each repository", 0.05)
+    arch, errors = [], []
+    for p in ctx.projects[:6]:
+        try:
+            arch.append(f"### {p}\n" + cap(ctx.run_tool("overview", {"repo": p, "aspects": ["overview", "routes", "hotspots"]}),
+                                            "the overview tool gives more")[:6000])
+        except Exception as exc:
+            errors.append(f"overview {p}: {exc}")
+    question = topic.strip() or "the purpose, main entry points, core business logic and main flows of the system"
+    seed = _seed(question, "guide", ctx, model, log)
+    seed["errors"] = errors + seed["errors"]
+    log("writing the guide", 0.4)
+    res = run_agent("guide", GUIDE_SYSTEM, f"<request>Write the project guide{': focus on ' + topic if topic.strip() else ''}."
+                                           "</request>", ctx, seed,
+                    "<architecture>\n" + "\n\n".join(arch) + "\n</architecture>" if arch else "", model=model)
+    text = res["output"] or ("The language model did not answer (" + "; ".join(res["errors"][-2:]) + "). "
+                             "Architecture and the most relevant results:\n\n" + "\n\n".join(arch) + "\n\n" + search.render(seed))
+    return {"guide": text, "llm": res["llm"], "model": res["model"], "steps": res["steps"],
+            "sources": search.sources(seed), "evidence": search.evidence(seed), "analysis": seed["analysis"],
+            "architecture": arch, "errors": res["errors"], "usage": llm.read_meter(), "ms": int((time.time() - t0) * 1000)}

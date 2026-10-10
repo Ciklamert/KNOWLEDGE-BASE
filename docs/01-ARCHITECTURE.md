@@ -49,7 +49,7 @@ the server except git traffic to the configured git servers.
 | Prompt analysis | `brain/query.py` | stop-words, ranked key terms, variants, concepts, language |
 | Code vectors | `brain/codevec.py` | multilingual code vector index with the corporate embedding model |
 | Search | `brain/search.py` | three-source search, relevance pipeline, Markdown rendering, evidence |
-| Agents | `brain/agents.py` | ask, enhance, query expansion, the shared tool loop and its tools |
+| Agents | `brain/agents.py` | ask, enhance, project guide, query expansion, the shared tool loop and its tools (also used by MCP and REST) |
 | Requirements writer | `brain/srs.py` | SRS generation from editable formats |
 | Repositories | `brain/repos.py` | registry, sets, git, sync, branch overlays, index state |
 | Branch drift | `brain/drift.py` | branch vs. `main` analysis with recommendations |
@@ -79,10 +79,12 @@ Every file is described in [16-CODEBASE.md](16-CODEBASE.md).
 2. In parallel for the repositories in scope: code engine search (BM25 + its local code vectors, fused by
    reciprocal rank), the multilingual code vector index, and LightRAG `/query/data` with the key terms and
    concepts supplied as keywords (so LightRAG makes no chat call).
-3. Document-to-code bridge: entity names from the document results become extra code-search terms.
-4. Code-graph expansion: callers, callees and parents of the best hits join the candidates.
-5. Re-ranking by meaning with the corporate embedding model.
-6. Repository balance, source lines, and graph annotations (signature, callers, callees, parents) per hit.
+3. Exact names: identifiers and file paths written in the question find their symbols directly.
+4. Document-to-code bridge: entity names from the document results become extra code-search terms.
+5. Code-graph expansion: callers, callees and parents of the best hits join the candidates.
+6. Re-ranking by meaning with the corporate embedding model.
+7. Named symbols first, repository balance, source lines, and graph annotations (signature, callers, callees,
+   parents) per hit; rendered for agents at a detail level (brief, normal, full).
 
 Details: [05-SEARCH-ASK-ENHANCE.md](05-SEARCH-ASK-ENHANCE.md).
 
@@ -91,6 +93,9 @@ Prompt analysis → one short model call for extra search terms → the search a
 model may call read-only tools for at most `MAX_STEPS` rounds within `TIMEOUT` → final answer or enhanced prompt.
 Enhance also runs a branch-drift check when a branch is given. Fallbacks: a gateway without tool calling gets one
 grounded call; an unreachable model returns the search results (ask) or a deterministic prompt (enhance).
+
+The project guide (Learn page) is the same loop with the architecture overview of every repository in scope added
+to the material.
 
 ### 3.4 Requirements writer
 Evidence (search + architecture overview of every repository + documents) → the model plans the capabilities →

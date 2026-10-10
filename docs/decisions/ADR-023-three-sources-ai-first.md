@@ -9,7 +9,8 @@
 - Every code hit **explains itself**: location, qualified name, signature, callers, callees, parents, which sources
   found it (`matched`), similarity and source lines. The response counts hits per source (`sources`).
 - **AI agents get what they would otherwise collect with read, grep and glob**: `read` (line ranges), `grep`
-  (graph-ranked text and regex), `files` (glob over the index), plus `snippet`, `symbol`, `trace` and `overview`.
+  (graph-ranked text and regex), `files` (glob over the index), plus `symbol`, `outline`, `trace` and `overview`
+  (ADR-024 keeps their answers small).
   Rendered results end with next-step hints. Agents need no local checkout and can work across every repository of a
   set.
 - **People see the same evidence**: one result layout everywhere, and an *Evidence used* panel under every agent

@@ -57,6 +57,7 @@ The script exits with the number of failures. It checks:
    The exit code is the number of failures.
 
 What it covers:
+- readiness and the first sync (clone, index, code vectors) finished;
 - authentication: anonymous request refused, wrong password, cookie with and without the CSRF header, bearer token;
 - readiness of both engines and the corporate API;
 - documents: upload and processing of a Turkish text, the converted Markdown, search finds it, delete;
@@ -65,6 +66,10 @@ What it covers:
 - models: the list and a chosen model named in the answer;
 - ask (tools used, model-expanded terms), enhance, background jobs with progress;
 - MCP: initialize, tools/list, search, symbol, read, grep, files;
+- token economy and exact lookups: the tool list stays under 6,000 characters, `outline`, `read` without a
+  repository, `grep mode=files`, `symbol` by qualified name, `search detail=brief` smaller than `full`, an
+  identifier in the question ranked first;
+- learning: the structure overview and a project guide with its token usage;
 - settings: round trip and validation;
 - repositories and sets: saving, set scope, single-repository scope, repository balance in a set;
 - webhooks: GitLab group hook (wrong secret, merge accepted, merged code searchable, other branch ignored), TFS
@@ -78,7 +83,7 @@ What it covers:
 Windows 11, Python 3.13.16, codebase-memory-mcp 0.11.0, LightRAG 1.5.7, mock gateway, empty data folder:
 - `setup.ps1 -NonInteractive` built `.venv` and installed every package from `wheels/` with `--no-index`;
 - all static checks pass;
-- all 63 end-to-end checks pass; cold start to `ready` takes about 10 seconds.
+- all 73 end-to-end checks pass; cold start to `ready` takes about 10 seconds.
 
 The Linux installer is syntax-checked; it has not been run on a Linux machine. GitLab and TFS were simulated with
 their webhook payloads; no real GitLab or TFS server was used.

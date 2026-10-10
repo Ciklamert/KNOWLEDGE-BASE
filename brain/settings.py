@@ -87,6 +87,13 @@ SCHEMA: list[Setting] = [
     S("BRAIN_SEARCH_DOC_CHUNKS", "6", "Search", "Document passages returned per search.", "int"),
     S("BRAIN_SEARCH_TIMEOUT", "60", "Search", "Seconds before a search part (code or docs) is abandoned.", "float"),
     S("BRAIN_CONTEXT_MAX_CHARS", "16000", "Search", "Size budget of rendered search context given to agents.", "int"),
+    S("BRAIN_SEARCH_DETAIL", "normal", "Search",
+      "How much of each code hit search writes for AI agents, MCP and the CLI (less = fewer tokens): brief = location, "
+      "signature, callers, callees and why it matched; normal = also the source of the 3 best hits; full = the source "
+      "of every hit. A request can choose another level.", "choice", ("brief", "normal", "full")),
+    S("BRAIN_TOOL_MAX_TOKENS", "2500", "Search",
+      "Approximate token limit of one code-tool answer for agents (trace, grep, overview); longer answers are cut "
+      "and say how to get the rest.", "int"),
     # ---- ask agent -------------------------------------------------------------------------------------
     S("BRAIN_ASK_MODEL", "", "Ask agent", "Chat model for the ask agent (empty = BRAIN_LLM_MODEL)."),
     S("BRAIN_ASK_TIMEOUT", "180", "Ask agent", "Total seconds for one question (all steps).", "float"),
@@ -99,6 +106,12 @@ SCHEMA: list[Setting] = [
     S("BRAIN_ENHANCE_MAX_STEPS", "4", "Enhance agent", "Maximum tool-calling rounds before writing the prompt.", "int"),
     S("BRAIN_ENHANCE_MAX_TOKENS", "1800", "Enhance agent", "Maximum tokens of the enhanced prompt.", "int"),
     S("BRAIN_ENHANCE_TEMPERATURE", "0.2", "Enhance agent", "Sampling temperature.", "float"),
+    # ---- project guide -----------------------------------------------------------------------------------
+    S("BRAIN_GUIDE_MODEL", "", "Project guide", "Chat model for the project guide (empty = BRAIN_LLM_MODEL)."),
+    S("BRAIN_GUIDE_TIMEOUT", "300", "Project guide", "Total seconds for one project guide (all steps).", "float"),
+    S("BRAIN_GUIDE_MAX_STEPS", "5", "Project guide", "Maximum tool-calling rounds before writing the guide.", "int"),
+    S("BRAIN_GUIDE_MAX_TOKENS", "3000", "Project guide", "Maximum tokens of the guide.", "int"),
+    S("BRAIN_GUIDE_TEMPERATURE", "0.2", "Project guide", "Sampling temperature.", "float"),
     S("BRAIN_AGENT_TOOL_CALLING", "auto", "Corporate API",
       "auto = use native tool calling, fall back if the gateway rejects it; native; off = one-shot with context.",
       "choice", ("auto", "native", "off")),
@@ -336,9 +349,9 @@ def secret_key() -> bytes:
 
 
 def model(role: str) -> str:
-    """Chat model for a role (ask, enhance, lightrag) with fallback to BRAIN_LLM_MODEL."""
+    """Chat model for a role (ask, enhance, srs, guide, lightrag) with fallback to BRAIN_LLM_MODEL."""
     return get({"ask": "BRAIN_ASK_MODEL", "enhance": "BRAIN_ENHANCE_MODEL", "lightrag": "LIGHTRAG_LLM_MODEL",
-                "srs": "BRAIN_SRS_MODEL"}[role]) \
+                "srs": "BRAIN_SRS_MODEL", "guide": "BRAIN_GUIDE_MODEL"}[role]) \
         or get("BRAIN_LLM_MODEL")
 
 

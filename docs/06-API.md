@@ -36,8 +36,8 @@ Errors are JSON `{"detail": "..."}`:
 
 | Method and path | Body / query | Returns |
 |---|---|---|
-| `GET /api/status` | | `ready`; `engines.code` and `engines.docs` (`state`, `detail`, log tail on error); `llm` (probe result and real embedding size); `pipeline` (LightRAG ingestion); `models` (`default`, `ask`, `enhance`, `srs`, `lightrag`, `embedding`, `vision`); `running` jobs; `uptime` |
-| `GET /api/jobs` | `kind` (`startup`, `sync`, `upload`, `ask`, `enhance`, `srs`, `branch`, `restart`), `limit` (50) | recent jobs, newest first |
+| `GET /api/status` | | `ready`; `engines.code` and `engines.docs` (`state`, `detail`, log tail on error); `llm` (probe result and real embedding size); `pipeline` (LightRAG ingestion); `models` (`default`, `ask`, `enhance`, `srs`, `guide`, `lightrag`, `embedding`, `vision`); `running` jobs; `uptime` |
+| `GET /api/jobs` | `kind` (`startup`, `sync`, `upload`, `ask`, `enhance`, `guide`, `srs`, `branch`, `restart`), `limit` (50) | recent jobs, newest first |
 | `GET /api/jobs/{job_id}` | | one job with `state` (running, done, error), `step`, `progress`, `steps` (last 100), `result`, `error`, `seconds` |
 | `GET /api/logs/{name}` | `name` = `server`, `lightrag`, `code`; `lines` (200, at most 2000) | the last log lines |
 
@@ -50,10 +50,11 @@ value); or `set` (a set name) and `repos` (a list, or a comma-separated string).
 | Method and path | Body | Returns |
 |---|---|---|
 | `POST /api/analyze` | `{"text"}` (also `query`, `prompt` or `question`) | the prompt analysis only: `language`, `terms[{term, kind, score}]`, `keywords`, `variants`, `identifiers`, `concepts`, `stop_words`, `tokens`, `summary` |
-| `GET /api/models` | | `models` (chat models the corporate API lists at `GET /models`, plus the configured ones, without the embedding model), `listed`, `error`, `defaults` (`ask`, `enhance`, `srs`) |
-| `POST /api/search` | `{"query", "scope": "all"\|"code"\|"semantic"\|"docs", "target", "set", "repos", "branch", "k"}` | `analysis` (with `expanded`, `bridged` when used), `pipeline`, `sources` (hits per source), `code[]` (`project`, `id`, `qn`, `name`, `label`, `path`, `line1`, `line2`, `code`, `matched`, `signature`, `callers`, `callees`, `parents`, `similarity`, `rerank`), `relations[]`, `docs` (`chunks`, `entities`, `relations`), `projects`, `errors`, `ms`, `markdown` |
-| `POST /api/ask` | `{"question", "target", "set", "repos", "branch", "model", "async": false}` | `answer`, `model`, `llm`, `analysis`, `sources`, `evidence` (the search the answer is based on), `steps` (tool calls), `errors`, `ms`; with `"async": true` only `{"job"}` |
-| `POST /api/enhance` | `{"prompt", "target", "set", "repos", "branch", "model", "repo", "base_commit", "changed_files": [..], "async": false}` | `enhanced`, `model`, `llm`, `analysis`, `sources`, `evidence`, `steps`, `drift`, `errors`, `ms`; or `{"job"}` |
+| `GET /api/models` | | `models` (chat models the corporate API lists at `GET /models`, plus the configured ones, without the embedding model), `listed`, `error`, `defaults` (`ask`, `enhance`, `srs`, `guide`) |
+| `POST /api/search` | `{"query", "scope": "all"\|"code"\|"semantic"\|"docs", "target", "set", "repos", "branch", "k", "detail": "brief"\|"normal"\|"full"}` | `analysis` (with `expanded`, `bridged` when used), `pipeline`, `sources` (hits per source), `code[]` (`project`, `id`, `qn`, `name`, `label`, `path`, `line1`, `line2`, `code`, `matched`, `signature`, `callers`, `callees`, `parents`, `similarity`, `rerank`), `relations[]`, `docs` (`chunks`, `entities`, `relations`), `projects`, `errors`, `ms`, `markdown` (at the requested `detail`, default `BRAIN_SEARCH_DETAIL`) |
+| `POST /api/ask` | `{"question", "target", "set", "repos", "branch", "model", "async": false}` | `answer`, `model`, `llm`, `analysis`, `sources`, `evidence` (the search the answer is based on), `steps` (tool calls), `errors`, `usage` (`calls`, `prompt_tokens`, `completion_tokens`), `ms`; with `"async": true` only `{"job"}` |
+| `POST /api/enhance` | `{"prompt", "target", "set", "repos", "branch", "model", "repo", "base_commit", "changed_files": [..], "async": false}` | `enhanced`, `model`, `llm`, `analysis`, `sources`, `evidence`, `steps`, `drift`, `errors`, `usage`, `ms`; or `{"job"}` |
+| `POST /api/guide` | `{"topic", "target", "set", "repos", "model", "async": true}` | `{"job"}`; the job result (or, with `"async": false`, the response) is `{guide, model, llm, architecture, analysis, sources, evidence, steps, errors, usage, ms}` |
 | `POST /api/drift` | `{"repo", "branch", "base_commit", "head_commit", "changed_files": [..]}` (`repo` required) | `tracked_branch`, `indexed_commit`, `main_head`, `base_commit`, `behind`, `main_files`, `branch_files`, `risk_files`, `facts`, `recommendations[{action, why, how, files}]`, `markdown` |
 
 Example:
@@ -73,7 +74,9 @@ curl -s -H "Authorization: Bearer $BRAIN_API_TOKEN" -H "Content-Type: applicatio
 | `POST /api/repos/{name}/branches` | `{"branch"}` | `{"job"}`: index a pushed branch as an overlay |
 | `DELETE /api/repos/{name}/branches/{branch}` | | removes the overlay; the branch may contain `/` |
 
-## Code (used by the UI, and the read / grep / glob replacements for agents)
+## Code (used by the UI, and the read / grep / glob replacements for agents without MCP)
+
+`target` (`set:<name>` or `repo:<name>`) or `repo` choose the scope; without them every repository is used.
 
 | Method and path | Query / body | Returns |
 |---|---|---|
@@ -82,9 +85,12 @@ curl -s -H "Authorization: Bearer $BRAIN_API_TOKEN" -H "Content-Type: applicatio
 | `GET /api/code/ego/{node_id}` | `project`, `depth` (1 or 2) | the neighbourhood of a node |
 | `GET /api/code/node/{node_id}` | `project` | node details, source, incoming and outgoing relations |
 | `GET /api/code/find` | `q`, `project` (optional) | up to 25 symbols by name |
-| `GET /api/code/read` | `repo`, `path`, `start` (1), `end` | `{project, path, start, end, total_lines, text}`: numbered lines, at most 400 (default 200) |
+| `GET /api/code/symbol` | `name` (short or qualified), `source` (`auto`, `full`, `none`), `target` or `repo` | `{"text"}`: location, signature, source, callers, callees, parents, other matches |
+| `GET /api/code/outline` | `path`, `target` or `repo` | `{"text"}`: declarations of the file with line ranges |
+| `GET /api/code/overview` | `repo`, `path` (folder), `aspects` (comma list: `overview`, `structure`, `routes`, `hotspots`, `entry_points`, `dependencies`, `layers`, `file_tree`) | `{"text"}`: the repository's structure |
+| `GET /api/code/read` | `path`, `start` (1), `end`, `repo` or `target` | `{project, path, start, end, total_lines, text}`: numbered lines, at most 400 (default 200); without `repo` the first repository that has the file |
 | `GET /api/code/files` | `pattern` (glob, default `*`), `target` or `repo` | `{"files": ["repo/path", ...]}`, at most 300 per repository |
-| `POST /api/code/grep` | `{"pattern", "regex": false, "file_pattern", "target", "set", "repos"}` | `{"text"}`: matches per repository, ranked by the code graph |
+| `POST /api/code/grep` | `{"pattern", "regex": false, "mode": "files"\|"matches"\|"full", "file_pattern", "path", "target", "set", "repos"}` | `{"text"}`: matches per repository with matches, ranked by the code graph |
 
 ## Documents
 

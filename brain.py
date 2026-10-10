@@ -6,6 +6,7 @@
   brain search "text" [--scope all|code|semantic|docs] [--set S]   search (no LLM)
   brain ask "question" [--set S]    ask the AI-BRAIN ask agent (grounded answer with sources)
   brain enhance "prompt" [--set S]  print an implementation-ready prompt for an AI coding agent
+  brain guide ["topic"] [--set S]   write a project guide for newcomers
   brain drift [PATH] [--repo R]     compare your branch in PATH (default: .) with the indexed main
   brain connect [claude|opencode|pi|all]   print the configuration for an AI agent
   brain version
@@ -66,7 +67,8 @@ def cmd_sync(a):
 
 
 def cmd_search(a):
-    r = api("POST", "/api/search", {"query": " ".join(a.query), "scope": a.scope, "set": a.set, "branch": a.branch})
+    r = api("POST", "/api/search", {"query": " ".join(a.query), "scope": a.scope, "set": a.set, "branch": a.branch,
+                                    "detail": a.detail})
     print(r["markdown"] or "no matches")
     if r["errors"]:
         print("\nerrors: " + "; ".join(r["errors"]), file=sys.stderr)
@@ -115,6 +117,13 @@ def cmd_enhance(a):
     print(r["enhanced"])
     print(f"\n-- {r['ms']} ms, llm: {r['llm']}, tools: {[s['tool'] for s in r['steps']]}, notes: {r['errors']}",
           file=sys.stderr)
+
+
+def cmd_guide(a):
+    r = api("POST", "/api/guide", {"topic": " ".join(a.topic), "set": a.set, "repos": [a.repo] if a.repo else None,
+                                   "async": False}, timeout=1800)
+    print(r["guide"])
+    print(f"\n-- {r['ms']} ms, usage: {r.get('usage')}, notes: {r['errors']}", file=sys.stderr)
 
 
 def cmd_drift(a):
@@ -216,10 +225,16 @@ def main():
         p.add_argument("--branch")
         if name == "search":
             p.add_argument("--scope", default="all", choices=["all", "code", "semantic", "docs"])
+            p.add_argument("--detail", choices=["brief", "normal", "full"])
         if name == "enhance":
             p.add_argument("--path", help="your checkout: adds branch-drift notes")
             p.add_argument("--repo")
         p.set_defaults(f=fn)
+    p = sub.add_parser("guide")
+    p.add_argument("topic", nargs="*")
+    p.add_argument("--set")
+    p.add_argument("--repo")
+    p.set_defaults(f=cmd_guide)
     p = sub.add_parser("drift")
     p.add_argument("path", nargs="?", default=".")
     p.add_argument("--repo")

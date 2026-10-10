@@ -71,6 +71,8 @@ Repositories and repository sets live in `repos.json` (another file: `BRAIN_REPO
 | `BRAIN_SEARCH_DOC_CHUNKS` | `6` | live | Document passages returned per search. |
 | `BRAIN_SEARCH_TIMEOUT` | `60` | live | Seconds before a search part (code or docs) is abandoned. |
 | `BRAIN_CONTEXT_MAX_CHARS` | `16000` | live | Size budget of rendered search context given to agents. |
+| `BRAIN_SEARCH_DETAIL` | `normal` | live | How much of each code hit search writes for AI agents, MCP and the CLI (less = fewer tokens): brief = location, signature, callers, callees and why it matched; normal = also the source of the 3 best hits; full = the source of every hit. A request can choose another level. One of: `brief`, `normal`, `full`. |
+| `BRAIN_TOOL_MAX_TOKENS` | `2500` | live | Approximate token limit of one code-tool answer for agents (trace, grep, overview); longer answers are cut and say how to get the rest. |
 
 ## Ask agent
 
@@ -91,6 +93,16 @@ Repositories and repository sets live in `repos.json` (another file: `BRAIN_REPO
 | `BRAIN_ENHANCE_MAX_STEPS` | `4` | live | Maximum tool-calling rounds before writing the prompt. |
 | `BRAIN_ENHANCE_MAX_TOKENS` | `1800` | live | Maximum tokens of the enhanced prompt. |
 | `BRAIN_ENHANCE_TEMPERATURE` | `0.2` | live | Sampling temperature. |
+
+## Project guide
+
+| Key | Default | Restart | Meaning |
+|---|---|---|---|
+| `BRAIN_GUIDE_MODEL` | (empty) | live | Chat model for the project guide (empty = BRAIN_LLM_MODEL). |
+| `BRAIN_GUIDE_TIMEOUT` | `300` | live | Total seconds for one project guide (all steps). |
+| `BRAIN_GUIDE_MAX_STEPS` | `5` | live | Maximum tool-calling rounds before writing the guide. |
+| `BRAIN_GUIDE_MAX_TOKENS` | `3000` | live | Maximum tokens of the guide. |
+| `BRAIN_GUIDE_TEMPERATURE` | `0.2` | live | Sampling temperature. |
 
 ## Code graph
 

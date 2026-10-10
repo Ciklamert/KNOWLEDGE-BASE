@@ -6,6 +6,8 @@ Pipeline (each stage can be switched off in Settings; see docs/05-SEARCH-ASK-ENH
      engine (no network) + the corporate multilingual code vector index (brain/codevec.py, BRAIN_CODE_VECTORS);
      documents = LightRAG graph + vector retrieval with concepts as high-level and key terms as low-level keywords
      (embedding call only); scope "semantic" = code by meaning only (both vector indexes, no BM25);
+     exact names: identifiers and file paths written in the question find their symbols directly and are
+     always ranked first (the user is pointing at them);
   2. document -> code bridge (BRAIN_DOC_BRIDGE): the domain entities the documents returned (e.g. "Payment
      Gateway", "Retry Policy") become extra code-search terms, so business words in Turkish or English reach the
      code that implements them;
@@ -124,6 +126,15 @@ def _merge(primary: list[dict], extra: list[dict], weight: float = 0.5) -> list[
     return [hits[key] for key in sorted(score, key=lambda x: -score[x])]
 
 
+PINNED = ("exact name", "file path")
+
+
+def _pin(hits: list[dict]) -> list[dict]:
+    """Symbols the question names exactly come first, in their current order."""
+    first = [h for h in hits if any(m in PINNED for m in h.get("matched", []))]
+    return first + [h for h in hits if h not in first]
+
+
 def _tag(hits: list[dict], reason: str) -> list[dict]:
     for h in hits:
         h["matched"] = list(dict.fromkeys(h.get("matched", []) + [reason]))
@@ -188,6 +199,16 @@ def search(query: str, scope: str = "all", set_name: str | None = None, repo_nam
             out["pipeline"].append("document graph (entities, relations, passages)")
         except Exception as exc:
             out["errors"].append(f"docs: {exc or 'timeout'}")
+    # 1b. exact names and file paths written in the question
+    named = [t["term"] for t in analysis["terms"] if t["kind"] in ("identifier", "path")]
+    if projects and named:
+        try:
+            exact = code.exact(named, projects)
+            if exact:
+                code_hits = _merge(exact, code_hits, 1.0)
+                out["pipeline"].append(f"exact names ({len(exact)})")
+        except Exception as exc:
+            out["errors"].append(f"exact names: {exc}")
     # 2. document -> code bridge: business terms from the document graph become code-search terms
     if projects and scope != "semantic" and cfg.get("BRAIN_DOC_BRIDGE") and out["docs"]:
         terms = _bridge_terms(out["docs"], kw)
@@ -219,8 +240,8 @@ def search(query: str, scope: str = "all", set_name: str | None = None, repo_nam
             out["pipeline"].append("semantic re-rank")
         except Exception as exc:
             out["errors"].append(f"re-rank skipped: {exc}")
-    # 5. final: repository balance, source lines, graph context (signature, callers, callees)
-    out["code"] = code.annotate(code.with_code(_diversify(code_hits, k)))
+    # 5. final: named symbols first, repository balance, source lines, graph context (signature, callers, callees)
+    out["code"] = code.annotate(code.with_code(_diversify(_pin(code_hits), k)))
     if out["docs"].get("chunks"):
         out["docs"]["chunks"] = out["docs"]["chunks"][:chunks]
     if out["code"]:
@@ -230,7 +251,7 @@ def search(query: str, scope: str = "all", set_name: str | None = None, repo_nam
             out["errors"].append(f"relations: {exc}")
     m = [x for h in out["code"] for x in h.get("matched", [])]
     d = out["docs"] or {}
-    out["sources"] = {"code graph": sum(1 for x in m if x == "keywords" or x.startswith("code graph") or x == "document terms"),
+    out["sources"] = {"code graph": sum(1 for x in m if x in ("keywords", "document terms") + PINNED or x.startswith("code graph")),
                       "code vectors": sum(1 for x in m if "vectors" in x),
                       "document passages": len(d.get("chunks") or []), "document entities": len(d.get("entities") or []),
                       "document facts": len(d.get("relations") or []), "code relations": len(out["relations"])}
@@ -244,59 +265,62 @@ def _lang(path: str) -> str:
             "h": "c", "hpp": "cpp", "yml": "yaml"}.get(ext, ext)
 
 
-def render(r: dict, max_chars: int | None = None, snippet_lines: int = 30) -> str:
-    """Markdown for people and for AI agents: every code hit says where it is, why it matched, its signature and its
-    callers/callees, so an agent can work from it instead of grep/glob/read. Sections are dropped whole when the
-    budget is reached (the most important come first)."""
+# detail level -> (hits with source, source lines, passage chars, relations, entities, facts, names per caller list)
+LEVELS = {"brief": (0, 0, 300, 0, 6, 6, 3), "normal": (3, 15, 600, 10, 8, 8, 5), "full": (99, 30, 1000, 25, 12, 10, 6)}
+
+
+def render(r: dict, max_chars: int | None = None, detail: str | None = None) -> str:
+    """Markdown for AI agents and people. Every code hit says where it is, why it matched, its signature and its
+    callers / callees, so an agent can work from it instead of grep / glob / read. `detail` (BRAIN_SEARCH_DETAIL by
+    default) sets how much source is included: brief = none, normal = the 3 best hits, full = every hit. Sections
+    are dropped whole when the budget is reached (the most important come first)."""
     max_chars = max_chars or cfg.get("BRAIN_CONTEXT_MAX_CHARS")
+    detail = detail if detail in LEVELS else cfg.get("BRAIN_SEARCH_DETAIL")
+    n_src, n_lines, n_pass, n_rel, n_ent, n_fact, n_names = LEVELS.get(detail, LEVELS["normal"])
     items: list[str] = []
     a = r.get("analysis")
     if a and a["keywords"]:
         items.append("_Key terms:_ " + ", ".join(f"`{t}`" for t in a["keywords"])
                      + (f" · _expanded:_ {', '.join(a['expanded'])}" if a.get("expanded") else "")
-                     + (f" · _from documents:_ {', '.join(a['bridged'])}" if a.get("bridged") else "")
-                     + (f" · _ignored stop-words:_ {', '.join(a['stop_words'])}" if a["stop_words"] else ""))
+                     + (f" · _from documents:_ {', '.join(a['bridged'])}" if a.get("bridged") else ""))
     if r.get("sources"):
         items.append("_Sources:_ " + ", ".join(f"{k} {v}" for k, v in r["sources"].items() if v)
                      + (f" · _repositories:_ {', '.join(r['projects'])}" if r.get("projects") else ""))
     if r["code"]:
-        items.append("## Code (code graph + code vectors, re-ranked by meaning)")
+        items.append("## Code")
         for i, h in enumerate(r["code"], 1):
-            lines = (h.get("code") or "").splitlines()
-            snip = "\n".join(lines[:snippet_lines]) + ("\n…" if len(lines) > snippet_lines else "")
             meta = []
             if h.get("signature"):
-                meta.append(f"signature `{h['signature']}`")
-            if h.get("callers"):
-                meta.append("called by " + ", ".join(f"`{x}`" for x in h["callers"]))
-            if h.get("callees"):
-                meta.append("calls " + ", ".join(f"`{x}`" for x in h["callees"]))
-            if h.get("parents"):
-                meta.append("extends/implements " + ", ".join(f"`{x}`" for x in h["parents"]))
+                meta.append(f"`{h['signature']}`")
+            for label, key in (("called by", "callers"), ("calls", "callees"), ("extends", "parents")):
+                if h.get(key):
+                    meta.append(f"{label} " + ", ".join(h[key][:n_names]))
             if h.get("matched"):
                 meta.append("found by " + ", ".join(h["matched"]))
-            loc = f"{h['project']}/{h['path']}:{h['line1']}-{h['line2']}" if h.get("path") else f"{h['project']} (no file: {h['label'].lower()})"
-            items.append(f"{i}. `{loc}` {h['label']} `{h['name']}`"
-                         + (f" (qualified: `{h['qn']}`)" if h.get("qn") else "")
-                         + ("\n   " + " · ".join(meta) if meta else "")
-                         + (f"\n```{_lang(h['path'])}\n{snip}\n```" if snip.strip() else ""))
-    rel = list(dict.fromkeys(f"- `{e['a']}` —{e['type']}→ `{e['b']}`" for e in r["relations"]))
-    if rel:
-        items.append("## Code relationships (code graph)\n" + "\n".join(rel[:25]))
+            loc = f"{h['project']}/{h['path']}:{h['line1']}-{h['line2']}" if h.get("path") else f"{h['project']} (no file)"
+            text = f"{i}. `{loc}` {h['label']} `{h['qn'] or h['name']}`" + ("\n   " + " · ".join(meta) if meta else "")
+            lines = (h.get("code") or "").splitlines()
+            if i <= n_src and lines:
+                snip = "\n".join(lines[:n_lines]) + ("\n…" if len(lines) > n_lines else "")
+                text += f"\n```{_lang(h['path'])}\n{snip}\n```"
+            items.append(text)
+    rel = list(dict.fromkeys(f"- `{e['a']}` {e['type']} `{e['b']}`" for e in r["relations"]))
+    if rel and n_rel:
+        items.append("## Code relationships\n" + "\n".join(rel[:n_rel]))
     d = r.get("docs") or {}
     if d.get("chunks"):
-        items.append("## Document passages (document graph)")
+        items.append("## Document passages")
         for c in d["chunks"]:
-            items.append(f"> **{c['source']}**: " + " ".join(c["content"].split())[:1000])
+            items.append(f"> **{c['source']}**: " + " ".join(c["content"].split())[:n_pass])
     if d.get("entities"):
-        items.append("## Domain entities (document graph)\n" + "\n".join(
-            f"- **{e['name']}** ({e['type']}): {e['description'][:240]}" for e in d["entities"][:12]))
+        items.append("## Domain entities\n" + "\n".join(
+            f"- **{e['name']}** ({e['type']}): {e['description'][:200]}" for e in d["entities"][:n_ent]))
     if d.get("relations"):
-        items.append("## Domain facts (document graph)\n" + "\n".join(
-            f"- {e['a']} → {e['b']}: {e['description'][:220]}" for e in d["relations"][:10]))
+        items.append("## Domain facts\n" + "\n".join(
+            f"- {e['a']} → {e['b']}: {e['description'][:200]}" for e in d["relations"][:n_fact]))
     if r["code"]:
-        items.append("_Next steps:_ `snippet` (qualified name) for full source · `trace` for call chains · "
-                     "`read` (repo, path, lines) for any file · `grep` for exact text · `files` to list paths.")
+        items.append("_Next:_ `symbol` (name) for source, callers and callees · `outline` (repo, path) for a file's "
+                     "structure · `read` (repo, path, start, end) for exact lines · `trace` for call chains.")
     out, total = [], 0
     for p in items:
         if total + len(p) > max_chars:
