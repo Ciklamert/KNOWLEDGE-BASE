@@ -124,7 +124,9 @@ SCHEMA: list[Setting] = [
     S("CBM_INDEX_TIMEOUT", "7200", "Code graph", "Seconds one repository index may take.", "float"),
     S("CBM_QUERY_TIMEOUT", "120", "Code graph", "Seconds one code-graph query may take.", "float"),
     S("BRAIN_SYNC_ON_START", "true", "Updates & webhooks", "Clone/update and index all repositories when the server starts.", "bool"),
-    S("BRAIN_SYNC_INTERVAL_MINUTES", "0", "Updates & webhooks", "Also fetch+index every N minutes (0 = webhooks only).", "int"),
+    S("BRAIN_SYNC_INTERVAL_MINUTES", "1440", "Updates & webhooks",
+      "Update every repository whose last update is older than N minutes, whatever else happened (default 1440 = "
+      "every 24 hours; 0 = off). Checked every minute, so it also catches up after a server restart.", "int"),
     S("BRAIN_WATCH_LOCAL_SECONDS", "30", "Updates & webhooks",
       "Local-path repositories: every N seconds, check whether the tracked branch moved (git pull, merge, commit) "
       "and re-index it (0 = off).", "int"),

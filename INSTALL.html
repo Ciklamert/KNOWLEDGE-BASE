@@ -177,7 +177,8 @@ secret as password; resource details: <b>All</b>.</li>
 <p>Local-path repositories need no webhook: they are re-indexed after every pull of their tracked branch. In any other
 checkout, <code>brain hook</code> makes every <code>git pull</code> of the tracked branch update AI-BRAIN at once.</p>
 <p>Every delivery and its result is listed under Repositories → <i>Webhook deliveries</i>. One hook for many repositories is also
-possible (group-level hooks), and without webhooks <code>BRAIN_SYNC_INTERVAL_MINUTES=10</code> updates periodically; see
+possible (group-level hooks), and every repository is updated at least every 24 hours anyway (<code>BRAIN_SYNC_INTERVAL_MINUTES</code>, lower it to update
+more often without webhooks); see
 <code>docs/09-WEBHOOKS.md</code>.</p>
 
 <h2 id="agents">11. Connect AI agents</h2>

@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -155,6 +156,41 @@ def main():
         check("binary rejected", False)
     except ValueError:
         check("binary rejected", True)
+    # MarkItDown-style registry: content sniffing, containers and more formats
+    name, _, mdtext = convert.to_markdown("no-extension", buf.getvalue())
+    check("Word file without extension recognised by content", "## Ödeme Kuralları" in mdtext, mdtext[:80])
+    name, _, mdtext = convert.to_markdown("wrong.pdf", buf.getvalue())
+    check("wrong extension falls back to the content's converter", "## Ödeme Kuralları" in mdtext, mdtext[:80])
+    nb = {"nbformat": 4, "metadata": {"kernelspec": {"language": "python"}}, "cells": [
+        {"cell_type": "markdown", "source": ["# Analiz"]},
+        {"cell_type": "code", "source": ["print(1)"], "outputs": [{"output_type": "stream", "text": ["1\n"]}]}]}
+    mdtext = convert.to_markdown("a.ipynb", _json.dumps(nb).encode())[2]
+    check("notebook -> Markdown", "# Analiz" in mdtext and "```python" in mdtext and "Output:" in mdtext, mdtext)
+    eml = (b"From: a@corp\r\nTo: b@corp\r\nSubject: Iade kurali\r\nMIME-Version: 1.0\r\n"
+           b"Content-Type: multipart/mixed; boundary=X\r\n\r\n--X\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
+           b"Refunds need approval.\r\n--X\r\nContent-Type: text/csv\r\nContent-Disposition: attachment; filename=r.csv\r\n\r\n"
+           b"a,b\r\n1,2\r\n--X--\r\n")
+    mdtext = convert.to_markdown("m.eml", eml)[2]
+    check("e-mail with attachment -> Markdown", "Iade kurali" in mdtext and "Refunds need approval." in mdtext
+          and "Attachment: r.csv" in mdtext and "<table>" in mdtext, mdtext)
+    zbuf = _io.BytesIO()
+    with zipfile.ZipFile(zbuf, "w") as z:
+        z.writestr("notes/readme.txt", "hello archive")
+        z.writestr("page.html", "<h1>Inside</h1><p>zipped <a href='https://x.corp/a'>link</a></p>")
+    mdtext = convert.to_markdown("bundle.zip", zbuf.getvalue())[2]
+    check("zip -> every file inside", "## notes/readme.txt" in mdtext and "hello archive" in mdtext and "## Inside" in mdtext
+          and "[link](https://x.corp/a)" in mdtext, mdtext)
+    rss = b"<?xml version='1.0'?><rss><channel><title>News</title><item><title>Yeni kural</title><link>https://n/1</link><description>&lt;p&gt;Text&lt;/p&gt;</description></item></channel></rss>"
+    mdtext = convert.to_markdown("feed.xml", rss)[2]
+    check("RSS feed -> sections", "## Yeni kural" in mdtext and "https://n/1" in mdtext, mdtext)
+    from brain import repos as _repos
+    check("every repository is updated at least every 24 hours", _repos.due(
+        ["fresh", "old", "failed", "never"], {"fresh": {"indexed_at": 90_000}, "old": {"indexed_at": 3_000},
+                                             "failed": {"indexed_at": 1_000, "failed_at": 2_000}}, 1440, 90_000)
+          == ["old", "failed", "never"])
+    check("page headers and footers removed", convert._drop_repeated(
+        ["ACME Corp - Page 1", "body a", "ACME Corp - Page 2", "body b", "ACME Corp - Page 3", "body c"],
+        [{convert._norm_line(f"ACME Corp - Page {i}")} for i in (1, 2, 3)]) == ["body a", "body b", "body c"])
 
     # requirements writer formats
     from brain import srs

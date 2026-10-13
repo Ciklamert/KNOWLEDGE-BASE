@@ -16,7 +16,10 @@ The script exits with the number of failures. It checks:
 - repositories: `gitlab:` and `tfs:` shorthands, credentials chosen by host, `{gitlab: …}` fields, webhook
   matching, per-repository secrets generated and kept, providers detected, sets stored, unknown set members
   rejected, the own webhook rejecting a wrong GitLab secret and accepting a TFS secret;
-- document conversion: Word, HTML, CSV and code to Markdown; binary files rejected;
+- document conversion: Word, HTML, CSV and code to Markdown; binary files rejected; a Word file without an
+  extension or with a wrong one recognised by its content; notebook, e-mail with an attachment, zip archive and RSS
+  feed converted; PDF page headers and footers removed;
+- the 24-hour update: the right repositories are due (old, failed long ago, never updated);
 - requirements formats: the default format parses into 10 sections, IDs are numbered, a format without sections
   and deleting `default` are rejected;
 - the decision records, the bundled wheels (Python 3.13 only), the required files, and every Markdown link in the
@@ -79,13 +82,14 @@ What it covers:
 - branch overlay: index, search with `branch`, remove;
 - a local checkout: a new commit on its tracked branch (as after a pull) is noticed and indexed automatically, and the
   new code is searchable;
-- requirements writer: formats listed and a specification written with the default format.
+- requirements writer: formats listed, a specification written with the default format, and one for something new
+  (mode `new`, the `new-feature` format, the related-existing-system appendix).
 
 ## 3. Test record
 Windows 11, Python 3.13.16, codebase-memory-mcp 0.11.0, LightRAG 1.5.7, mock gateway, empty data folder:
 - `setup.ps1 -NonInteractive` built `.venv` and installed every package from `wheels/` with `--no-index`;
 - all static checks pass;
-- all 75 end-to-end checks pass; `brain hook` was installed in a checkout, and a `git pull` of `main` started an
+- all 76 end-to-end checks pass; `brain hook` was installed in a checkout, and a `git pull` of `main` started an
   update on the server; cold start to `ready` takes about 10 seconds.
 
 The Linux installer is syntax-checked; it has not been run on a Linux machine. GitLab and TFS were simulated with

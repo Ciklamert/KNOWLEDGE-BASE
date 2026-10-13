@@ -34,7 +34,8 @@ MCP or a REST API. The only outbound connection is to the organisation's **OpenA
 | **Search** | Analyses the prompt (stop-words out, key terms ranked), searches the code graph, both code vector indexes and the document graph, connects business terms from documents to code, adds callers and callees of the best hits, and re-ranks everything by meaning. | none (embedding calls only) |
 | **Ask** | An agent researches with read-only tools and answers in the question's language, citing code (`repo/path:line`) and documents. | expansion + a few |
 | **Enhance prompt** | An agent turns a short request into an implementation-ready prompt for a coding agent: task, context, business rules, impact, plan, acceptance criteria, out of scope, open questions, branch warnings. | expansion + a few |
-| **Requirements writer** | Writes a Software Requirements Specification in plain language from code and documents, following an editable Markdown format. | several per capability |
+| **Requirements writer** | Writes a Software Requirements Specification in plain language, following an editable Markdown format: for what exists (from code and documents), or for something new you describe (with code and documents as context). | several per capability |
+| **Documents** | Every upload becomes Markdown first, the MarkItDown way: PDF, Word, PowerPoint, Excel, HTML, CSV, JSON, XML, RSS, notebooks, EPUB, e-mails with attachments, zip archives, images, code and text, recognised by content. | extraction by LightRAG |
 | **Code tools for agents** | `symbol`, `outline`, `read`, `grep`, `files`, `trace`, `overview`: exact answers in a few hundred tokens, across all repositories, without a local checkout. | none |
 | **Learn a project** | The structure of a repository (languages, packages, entry points, routes, most-connected code) and a written guide for newcomers: what it does, how it is built, main flows, where to start reading. | none / a few |
 | **Branch drift** | Compares a developer's branch with the indexed `main` and recommends what to do (rebase, trust local files, index the branch). | none |
@@ -43,7 +44,8 @@ Every function is available in the **web UI**, the **REST API** and **MCP**. The
 and removes documents, manages repositories, sets and webhooks, edits every setting, and shows the state,
 progress and errors of every background job. A merge into a repository's tracked branch on **GitLab** or
 **TFS / Azure DevOps Server** updates its code graph through a webhook, and so does every pull of that branch (local
-checkouts are watched; `brain hook` covers any other checkout). Every update pulls immediately.
+checkouts are watched; `brain hook` covers any other checkout). Every update pulls immediately, and every repository
+is updated at least every 24 hours.
 
 ## Quick start
 
@@ -111,4 +113,4 @@ documents under **Documents** and connect your agents (`brain connect`). The ful
 | [docs/17-REQUIREMENTS-WRITER.md](docs/17-REQUIREMENTS-WRITER.md) | the requirements writer and its formats |
 | [docs/18-ENGINE-COMPARISON.md](docs/18-ENGINE-COMPARISON.md) | codebase-memory-mcp compared with graphify and other engines |
 | [docs/19-REVIEW.md](docs/19-REVIEW.md) | review of the whole system, known limits and rating |
-| [docs/decisions/](docs/decisions/README.md) | architecture decision records ADR-001 to ADR-025 |
+| [docs/decisions/](docs/decisions/README.md) | architecture decision records ADR-001 to ADR-027 |

@@ -109,11 +109,11 @@ See [17-REQUIREMENTS-WRITER.md](17-REQUIREMENTS-WRITER.md).
 
 | Method and path | Body | Returns |
 |---|---|---|
-| `POST /api/srs` | `{"topic", "target", "set", "repos", "template": "default", "language": "auto", "model", "title", "async": true}` | `{"job"}`; the job result (or, with `"async": false`, the response) is `{name, markdown, title, topic, scope, template, language, model, capabilities, errors, seconds, evidence, analysis}` |
+| `POST /api/srs` | `{"topic", "mode": "existing"\|"new", "target", "set", "repos", "template", "language": "auto", "model", "title", "async": true}`; `template` defaults to `default` (existing) or `new-feature` (new) | `{"job"}`; the job result (or, with `"async": false`, the response) is `{name, markdown, title, topic, mode, scope, template, language, model, capabilities, errors, usage, seconds, evidence, analysis}` |
 | `GET /api/srs/templates` | | `{"templates": [names]}` |
 | `GET /api/srs/templates/{name}` | | `{name, text}` |
 | `PUT /api/srs/templates/{name}` | `{"text"}` | saves a format; it must contain at least one `##` section |
-| `DELETE /api/srs/templates/{name}` | | deletes a format (`default` cannot be deleted) |
+| `DELETE /api/srs/templates/{name}` | | deletes a format (the built-in `default` and `new-feature` cannot be deleted) |
 | `GET /api/srs/documents` | | written specifications with their metadata |
 | `GET /api/srs/documents/{name}` | | `{name, markdown}` |
 | `DELETE /api/srs/documents/{name}` | | deletes a specification |

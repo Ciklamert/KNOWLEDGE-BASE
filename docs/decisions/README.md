@@ -1,7 +1,7 @@
 # Architecture decision records
 
 Each record states the context, the decision, the alternatives considered and the consequences. Requirement numbers
-(R1-R30) refer to [00-REQUIREMENTS.md](../00-REQUIREMENTS.md).
+(R1-R33) refer to [00-REQUIREMENTS.md](../00-REQUIREMENTS.md).
 
 | ADR | Decision |
 |---|---|
@@ -23,10 +23,12 @@ Each record states the context, the decision, the alternatives considered and th
 | [ADR-016](ADR-016-prompt-analysis.md) | Prompt analysis before search, ask and enhance |
 | [ADR-017](ADR-017-relevance-pipeline.md) | Relevance pipeline: expansion, document bridge, graph expansion, re-ranking |
 | [ADR-018](ADR-018-repositories-webhooks-sets.md) | One webhook per repository; sets as repository groups; one scope combobox |
-| [ADR-019](ADR-019-everything-to-markdown.md) | Every document is converted to Markdown before LightRAG |
+| [ADR-019](ADR-019-everything-to-markdown.md) | Every document is converted to Markdown before LightRAG, the MarkItDown way |
 | [ADR-020](ADR-020-semantic-code-search.md) | Semantic code search: codebase-memory-mcp plus a multilingual code vector index |
 | [ADR-021](ADR-021-requirements-writer.md) | Requirements writer: format-driven, evidence-first SRS generation |
 | [ADR-022](ADR-022-prompt-design.md) | System prompt design for ask, enhance and the requirements writer |
 | [ADR-023](ADR-023-three-sources-ai-first.md) | Three sources in every result; results designed for AI agents first |
 | [ADR-024](ADR-024-token-economy.md) | Token economy for AI agents over MCP |
 | [ADR-025](ADR-025-learning-a-project.md) | Learning a project: structure without a model, a guide written from evidence |
+| [ADR-026](ADR-026-requirements-for-something-new.md) | Requirements for something new |
+| [ADR-027](ADR-027-daily-refresh.md) | Every repository is updated at least every 24 hours |

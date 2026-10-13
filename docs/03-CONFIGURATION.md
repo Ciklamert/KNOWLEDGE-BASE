@@ -123,7 +123,7 @@ Repositories and repository sets live in `repos.json` (another file: `BRAIN_REPO
 | Key | Default | Restart | Meaning |
 |---|---|---|---|
 | `BRAIN_SYNC_ON_START` | `true` | live | Clone/update and index all repositories when the server starts. |
-| `BRAIN_SYNC_INTERVAL_MINUTES` | `0` | live | Also fetch+index every N minutes (0 = webhooks only). |
+| `BRAIN_SYNC_INTERVAL_MINUTES` | `1440` | live | Update every repository whose last update is older than N minutes, whatever else happened (default 1440 = every 24 hours; 0 = off). Checked every minute, so it also catches up after a server restart. |
 | `BRAIN_WATCH_LOCAL_SECONDS` | `30` | live | Local-path repositories: every N seconds, check whether the tracked branch moved (git pull, merge, commit) and re-index it (0 = off). |
 | `BRAIN_DEFAULT_BRANCH` | `main` | live | Branch the code graph follows when a repository does not name one. |
 | `BRAIN_WEBHOOK_EVENTS` | `merge,push` | live | Events that trigger an update of the tracked branch: merge (MR/PR merged), push (any push to it). |

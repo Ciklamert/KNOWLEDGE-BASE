@@ -68,11 +68,7 @@ def boot() -> None:
             time.sleep(0.5)
         if cfg.get("BRAIN_SYNC_ON_START") and repos.all_repos() and code_job.state == "done":
             repos.request_sync(None, "start-up")
-        interval = cfg.get("BRAIN_SYNC_INTERVAL_MINUTES")
-        while interval > 0:
-            time.sleep(interval * 60)
-            repos.request_sync(None, "interval")
-            interval = cfg.get("BRAIN_SYNC_INTERVAL_MINUTES")
+        repos.refresh_stale()   # every repository at least every BRAIN_SYNC_INTERVAL_MINUTES (24 h)
     threading.Thread(target=initial_sync, daemon=True).start()
     threading.Thread(target=repos.watch_local, daemon=True, name="watch-local").start()
 
@@ -519,15 +515,16 @@ async def srs_template_delete(name: str):
 
 @app.post("/api/srs")
 async def srs_write(body: dict = Body(...)):
-    """Write a specification (background job unless "async": false)."""
+    """Write a specification (background job unless "async": false). mode: existing (describe what the code and
+    documents contain) | new (specify something new from the request, with the knowledge base as context)."""
     topic = str(body.get("topic", "")).strip()
     if not topic:
         raise HTTPException(400, "topic is required")
     set_name, rn, _ = _scope(body)
 
     def fn(log=lambda *a, **k: None):
-        return srs.write(topic, set_name, rn, body.get("template") or "default", body.get("language") or None,
-                         body.get("model") or None, body.get("title") or None, log=log)
+        return srs.write(topic, set_name, rn, body.get("template") or None, body.get("language") or None,
+                         body.get("model") or None, body.get("title") or None, mode=body.get("mode") or "existing", log=log)
     if body.get("async", True):
         return {"job": jobs.start("srs", f"Requirements: {topic[:80]}", lambda j: fn(log=j.log)).id}
     return await _run(fn)

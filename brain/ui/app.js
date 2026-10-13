@@ -629,7 +629,7 @@ let SRS_LAST = null
 async function loadTemplates() {
   const r = await api("/api/srs/templates").catch(() => ({ templates: ["default"] }))
   const sel = $("#q-template"), cur = sel.value
-  sel.innerHTML = r.templates.map((t) => `<option>${esc(t)}</option>`).join("")
+  sel.innerHTML = r.templates.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("")
   if (cur && r.templates.includes(cur)) sel.value = cur
 }
 async function loadTemplateInto(name) {
@@ -637,6 +637,11 @@ async function loadTemplateInto(name) {
   $("#q-tpl-name").value = r.name; $("#q-tpl-text").value = r.text
 }
 INIT.srs = () => {
+  seg($("#q-mode"), (m) => {   // "something new" uses its own built-in format unless another one was chosen
+    const sel = $("#q-template"), want = m === "new" ? "new-feature" : "default"
+    if (["default", "new-feature"].includes(sel.value) && $(`option[value="${want}"]`, sel)) sel.value = want
+    $("#r-topic").placeholder = m === "new" ? "e.g. customers can pay invoices in instalments / taksitli ödeme" : "e.g. the whole billing system / refunds / müşteri iade süreci"
+  })
   $("#q-tpl-box").addEventListener("toggle", () => { if ($("#q-tpl-box").open && !$("#q-tpl-text").value) loadTemplateInto($("#q-template").value || "default") })
   $("#q-tpl-load").onclick = () => loadTemplateInto($("#q-template").value)
   $("#q-tpl-new").onclick = async () => { await loadTemplateInto("default"); $("#q-tpl-name").value = "my-format" }
@@ -652,7 +657,7 @@ INIT.srs = () => {
     const topic = $("#r-topic").value.trim(); if (!topic) return toast("Describe what should be specified")
     $("#q-go").disabled = true; $("#q-out").innerHTML = ""; $("#q-actions").hidden = true
     try {
-      const { job } = await api("/api/srs", { method: "POST", json: { topic, target: $("#q-target").value, template: $("#q-template").value,
+      const { job } = await api("/api/srs", { method: "POST", json: { topic, mode: segVal($("#q-mode")), target: $("#q-target").value, template: $("#q-template").value,
         language: $("#q-lang").value, model: $("#q-model").value || null, async: true } })
       SRS_LAST = await followJob(job, $("#q-progress"))
       showSrs(SRS_LAST.name, SRS_LAST.markdown, SRS_LAST.errors); evidencePanel($("#q-ev"), SRS_LAST); REFRESH.srs()

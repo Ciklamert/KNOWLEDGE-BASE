@@ -8,7 +8,7 @@ It ends with the known limits, a rating and the recommended next steps.
 - Every module, the REST and MCP surface, the installers and this documentation were reviewed against each other;
   the static test enforces that every setting, route and MCP tool is documented and that every link works.
 - The end-to-end test runs on Windows 11 with Python 3.13.16 from an empty data folder against the mock gateway, and
-  all 75 checks pass ([15-TESTING.md](15-TESTING.md)).
+  all 76 checks pass ([15-TESTING.md](15-TESTING.md)).
 - The answer sizes below were measured on the test repository through MCP (≈ 4 characters per token).
 
 ## 2. AI agents over MCP: tokens
@@ -74,10 +74,10 @@ updates the repository's graph; every update pulls at once, and requests during 
 | Search, grep, glob, read for agents | 9 | graph-ranked grep with modes, outline before read, compact symbol, named symbols first, three-source search |
 | Exploring and learning for people | 8.5 | structure view, cited project guide, evidence everywhere, ask from the graph; one shared account |
 | Architecture and simplicity | 9 | a small core around two ready engines; one tool implementation behind MCP, REST and the agents |
-| Requirements coverage | 9 | all 30 requirements traced to code and tests ([00](00-REQUIREMENTS.md)) |
+| Requirements coverage | 9 | all 33 requirements traced to code and tests ([00](00-REQUIREMENTS.md)) |
 | Code quality | 8 | consistent, documented modules; a few long functions (search pipeline, requirements writer) |
-| Testing | 7.5 | static and 75 end-to-end checks; no real-API, Linux or load tests yet |
-| Documentation | 9 | step-by-step guides, 25 decision records, a generated configuration reference |
+| Testing | 7.5 | static and 76 end-to-end checks; no real-API, Linux or load tests yet |
+| Documentation | 9 | step-by-step guides, 27 decision records, a generated configuration reference |
 | **Overall** | **8.7** | ready for a pilot; the next step is the real gateway, real repositories and real questions |
 
 ## 8. Recommended next steps

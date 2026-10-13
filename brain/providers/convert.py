@@ -1,26 +1,31 @@
-"""Turn EVERY document into Markdown before it goes to LightRAG (``to_markdown``).
+"""Turn EVERY document into Markdown before it goes to LightRAG (``to_markdown``), following the idea of Microsoft's
+MarkItDown: one entry point, a registry of small converters, each deciding by file extension AND by the content
+itself (magic numbers, zip contents, text shape), tried in order with a fallback to the next converter and finally
+to plain text, and an output that keeps the document's structure (headings, lists, tables, links, code) while
+spending as few tokens as possible (no page furniture, no repeated page headers and footers, no blank-line runs).
 
-Word, PDF, PowerPoint, Excel, HTML, CSV, text, code and images all become Markdown with real headings, lists and
-HTML tables; documents with pictures become a ``.textpack`` (Markdown + image files) so the vision model can read
-the pictures. The converted Markdown is also kept in data/converted/ and can be previewed in the UI.
+Formats: PDF, Word, PowerPoint, Excel, HTML, CSV/TSV, JSON, XML, RSS/Atom feeds, Jupyter notebooks, EPUB e-books,
+e-mails (.eml, with their attachments), zip archives (every file inside), images (with their metadata), source code,
+configuration and text files. A file with a wrong or missing extension is recognised by its content.
 
+Differences from MarkItDown, on purpose: tables stay HTML, because LightRAG's native engine analyses HTML tables as
+tables; pictures are kept as image files in a ``.textpack`` (Markdown + images) for the vision model instead of being
+captioned during conversion; everything is model-free and uses only packages already bundled (pdfplumber, pypdfium2,
+python-docx, python-pptx, openpyxl, Pillow and the standard library).
 
-Why: LightRAG's own *native* engine reads .textpack locally (no external service). It turns every
-image into a ``drawings.json`` item (analysed by the vision model, VLM role), every HTML table into
-a ``tables.json`` item (analysed by the text model), and splits by headings for the ``P`` chunker.
-LightRAG's default PDF path (``legacy``) extracts plain text only: tables lose structure, images vanish.
-
-Model-free and permissively licensed: pdfplumber (MIT) for words, fonts and tables, pypdfium2
-(Apache-2.0/BSD) for rendering image regions and scanned pages. A page with no text layer is
-rendered whole, so the vision model reads it (OCR + description in one step).
+The converted Markdown is also kept in data/converted/ and can be previewed in the UI.
 """
+import base64
 import hashlib
 import html
 import io
+import json
 import re
 import zipfile
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 MIN_IMG_PX = 64          # LightRAG skips smaller images anyway (VLM_MIN_IMAGE_PIXEL)
 MAX_SHEET_ROWS = 2000
@@ -90,6 +95,7 @@ def pdf(data: bytes, title: str) -> "Pack":
         body = sizes.most_common(1)[0][0] if sizes else 10
         heading_sizes = sorted({s for s in sizes if s >= body * 1.18}, reverse=True)[:3]
 
+        edges: list[set[str]] = []   # normalised first and last lines of each page (headers / footers)
         for pno, page in enumerate(pdfp.pages):
             scale = 2.0
             rendered = None
@@ -140,6 +146,9 @@ def pdf(data: bytes, title: str) -> "Pack":
                 blocks.append((page.height, "image", _jpg(render())))
 
             blocks.sort(key=lambda b: b[0])
+            texts = [p[0] for _, k, p in blocks if k == "line"]
+            if texts:
+                edges.append({_norm_line(t) for t in texts[:2] + texts[-2:]})
             para, last_bottom = [], None
 
             def flush():
@@ -167,7 +176,20 @@ def pdf(data: bytes, title: str) -> "Pack":
                                        f"Figure on page {pno + 1} of {title}")
             flush()
     doc.close()
+    pack.md = _drop_repeated(pack.md, edges)
     return pack
+
+
+def _norm_line(text: str) -> str:
+    return re.sub(r"\d+", "#", " ".join(text.split()).lower())
+
+
+def _drop_repeated(md: list[str], edges: list[set[str]]) -> list[str]:
+    """Remove page headers and footers: lines at the top or bottom of at least 3 pages and half of all pages
+    (page numbers count as the same line). They carry no meaning and cost tokens on every page."""
+    counts = Counter(t for page in edges for t in page)
+    repeated = {t for t, n in counts.items() if n >= 3 and n >= len(edges) / 2 and len(t) < 120}
+    return [line for line in md if _norm_line(line) not in repeated] if repeated else md
 
 
 # ---------------------------------------------------------------- PowerPoint
@@ -242,12 +264,6 @@ def xlsx(data: bytes, title: str) -> "Pack":
     return pack
 
 
-def image(data: bytes, title: str, ext: str) -> "Pack":
-    pack = Pack(title)
-    pack.add_image(data, "jpg" if ext in (".jpg", ".jpeg") else ext.lstrip("."), title)
-    return pack
-
-
 # ---------------------------------------------------------------- Word
 def docx(data: bytes, title: str) -> "Pack":
     """Headings (from Word styles), lists, bold/italic, tables (HTML) and pictures, in document order."""
@@ -310,7 +326,10 @@ def docx(data: bytes, title: str) -> "Pack":
 
 # ---------------------------------------------------------------- HTML
 class _Html2Md:
-    """Small, dependency-free HTML -> Markdown: headings, paragraphs, lists, links, code, tables (kept as HTML)."""
+    """Small, dependency-free HTML -> Markdown: headings, paragraphs, lists, links, emphasis, code blocks, image alt
+    text and tables (kept as HTML). Page furniture (scripts, navigation, side bars, forms, footers) is dropped, as
+    MarkItDown does, so only the content costs tokens."""
+    SKIP = ("script", "style", "head", "nav", "noscript", "aside", "form", "footer", "svg", "button", "iframe", "select")
 
     def __init__(self):
         from html.parser import HTMLParser
@@ -318,6 +337,9 @@ class _Html2Md:
         self.buf: list[str] = []
         self.table: list[list[str]] | None = None
         self.skip = 0
+        self.pre = 0
+        self.href: str | None = None
+        self.list_depth = 0
         outer = self
 
         class P(HTMLParser):
@@ -335,11 +357,17 @@ class _Html2Md:
         text = " ".join("".join(self.buf).split())
         self.buf = []
         if text:
-            self.out += [prefix + text, ""]
+            self.out += [prefix + text] + ([] if prefix.lstrip().startswith("- ") else [""])   # list items stay together
 
     def start(self, tag, attrs):
-        if tag in ("script", "style", "head", "nav", "noscript"):
+        if tag in self.SKIP:
             self.skip += 1
+        elif self.skip:
+            return
+        elif tag == "pre":
+            self.flush()
+            self.pre += 1
+            self.buf = []
         elif tag == "table":
             self.flush()
             self.table = []
@@ -347,14 +375,38 @@ class _Html2Md:
             self.table.append([])
         elif tag in ("td", "th") and self.table is not None:
             self.buf = []
-        elif tag in ("p", "div", "br", "section", "article") or re.fullmatch(r"h[1-6]", tag) or tag == "li":
+        elif tag in ("ul", "ol"):
+            self.flush("  " * max(0, self.list_depth - 1) + "- " if self.list_depth else "")   # text of the parent item
+            self.list_depth += 1
+        elif tag in ("p", "div", "br", "section", "article", "main", "header", "blockquote") or re.fullmatch(r"h[1-6]", tag) or tag == "li":
             self.flush()
-        elif tag == "code":
+        elif tag == "code" and not self.pre:
             self.buf.append("`")
+        elif tag in ("b", "strong"):
+            self.buf.append("**")
+        elif tag in ("i", "em"):
+            self.buf.append("*")
+        elif tag == "a":
+            href = attrs.get("href") or ""
+            self.href = href if href.startswith(("http://", "https://", "mailto:")) else None
+            if self.href:
+                self.buf.append("[")
+        elif tag == "img":
+            alt = (attrs.get("alt") or "").strip()
+            if alt:
+                self.buf.append(f"(image: {alt})")
 
     def end(self, tag):
-        if tag in ("script", "style", "head", "nav", "noscript"):
+        if tag in self.SKIP:
             self.skip = max(0, self.skip - 1)
+        elif self.skip:
+            return
+        elif tag == "pre" and self.pre:
+            self.pre -= 1
+            code = "".join(self.buf).strip("\n")
+            self.buf = []
+            if code.strip():
+                self.out += ["```", code, "```", ""]
         elif tag in ("td", "th") and self.table is not None:
             if self.table:
                 self.table[-1].append(" ".join("".join(self.buf).split()))
@@ -365,11 +417,23 @@ class _Html2Md:
         elif re.fullmatch(r"h[1-6]", tag):
             self.flush("#" * int(tag[1]) + " ")
         elif tag == "li":
-            self.flush("- ")
-        elif tag in ("p", "div", "section", "article"):
+            self.flush("  " * max(0, self.list_depth - 1) + "- ")
+        elif tag in ("ul", "ol"):
             self.flush()
-        elif tag == "code":
+            self.list_depth = max(0, self.list_depth - 1)
+            if not self.list_depth:
+                self.out.append("")
+        elif tag in ("p", "div", "section", "article", "main", "header", "blockquote"):
+            self.flush()
+        elif tag == "code" and not self.pre:
             self.buf.append("`")
+        elif tag in ("b", "strong"):
+            self.buf.append("**")
+        elif tag in ("i", "em"):
+            self.buf.append("*")
+        elif tag == "a" and self.href:
+            self.buf.append(f"]({self.href})")
+            self.href = None
 
     def data(self, d):
         if not self.skip:
@@ -378,7 +442,8 @@ class _Html2Md:
     def convert(self, html_text: str) -> str:
         self.parser.feed(html_text)
         self.flush()
-        return "\n".join(self.out)
+        md = "\n".join(self.out)
+        return re.sub(r"\[\]\([^)]*\)", "", md)   # links without text (icons) left by the markup
 
 
 def html_md(data: bytes, title: str) -> "Pack":
@@ -387,13 +452,14 @@ def html_md(data: bytes, title: str) -> "Pack":
     return pack
 
 
-# ---------------------------------------------------------------- plain text, tables, code
+# ---------------------------------------------------------------- plain text, tables, code, data
 CODE_EXT = {".py": "python", ".java": "java", ".js": "javascript", ".ts": "typescript", ".cs": "csharp", ".go": "go",
             ".rb": "ruby", ".php": "php", ".kt": "kotlin", ".swift": "swift", ".c": "c", ".h": "c", ".cpp": "cpp",
             ".hpp": "cpp", ".rs": "rust", ".scala": "scala", ".sql": "sql", ".sh": "bash", ".ps1": "powershell",
-            ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".xml": "xml", ".toml": "toml", ".ini": "ini",
-            ".properties": "properties", ".conf": "", ".cfg": "", ".gradle": "groovy", ".vb": "vbnet"}
+            ".yaml": "yaml", ".yml": "yaml", ".toml": "toml", ".ini": "ini", ".properties": "properties",
+            ".conf": "", ".cfg": "", ".gradle": "groovy", ".vb": "vbnet"}
 TEXT_EXT = {".txt", ".text", ".log", ".rst", ".adoc", ".asciidoc", ".org", ".tex"}
+MAX_TEXT = 2_000_000   # characters; longer plain text is cut (the cut is stated in the output)
 
 
 def _decode(data: bytes) -> str:
@@ -407,7 +473,8 @@ def _decode(data: bytes) -> str:
 
 def text_md(data: bytes, title: str) -> "Pack":
     pack = Pack(title)
-    pack.md += [_decode(data).strip(), ""]
+    text = _decode(data).strip()
+    pack.md += [text[:MAX_TEXT], ""] + ([f"(text cut at {MAX_TEXT:,} characters)", ""] if len(text) > MAX_TEXT else [])
     return pack
 
 
@@ -424,13 +491,270 @@ def csv_md(data: bytes, title: str, delimiter: str) -> "Pack":
 
 def code_md(data: bytes, title: str, lang: str) -> "Pack":
     pack = Pack(title)
-    pack.md += [f"```{lang}", _decode(data).rstrip(), "```", ""]
+    pack.md += [f"```{lang}", _decode(data).rstrip()[:MAX_TEXT], "```", ""]
     return pack
 
 
-# ---------------------------------------------------------------- entry point
-SUPPORTED = sorted({".md", ".markdown", ".pdf", ".docx", ".pptx", ".xlsx", ".xlsm", ".html", ".htm", ".csv", ".tsv",
-                    ".png", ".jpg", ".jpeg", ".webp", ".gif"} | TEXT_EXT | set(CODE_EXT))
+def json_md(data: bytes, title: str) -> "Pack":
+    """JSON, pretty-printed in a fenced block (invalid JSON is kept as it is)."""
+    text = _decode(data)
+    try:
+        text = json.dumps(json.loads(text), indent=1, ensure_ascii=False)
+    except ValueError:
+        pass
+    pack = Pack(title)
+    pack.md += ["```json", text[:MAX_TEXT], "```", ""]
+    return pack
+
+
+def notebook_md(data: bytes, title: str) -> "Pack":
+    """Jupyter notebook: Markdown cells as they are, code cells fenced with the notebook's language, text outputs
+    (shortened) and image outputs."""
+    nb = json.loads(_decode(data))
+    lang = ((nb.get("metadata") or {}).get("kernelspec") or {}).get("language") \
+        or ((nb.get("metadata") or {}).get("language_info") or {}).get("name") or ""
+    pack = Pack(title)
+    src = lambda x: "".join(x) if isinstance(x, list) else str(x or "")
+    for cell in nb.get("cells", []):
+        if cell.get("cell_type") == "markdown":
+            pack.md += [src(cell.get("source")).strip(), ""]
+        elif cell.get("cell_type") == "code" and src(cell.get("source")).strip():
+            pack.md += [f"```{lang}", src(cell.get("source")).rstrip(), "```", ""]
+            for out in cell.get("outputs", []):
+                d = out.get("data") or {}
+                text = src(out.get("text")) or src(d.get("text/plain"))
+                if text.strip():
+                    lines = text.strip().splitlines()
+                    pack.md += ["Output:", "```", "\n".join(lines[:20]) + ("\n…" if len(lines) > 20 else ""), "```", ""]
+                if d.get("image/png"):
+                    pack.add_image(base64.b64decode(src(d["image/png"])), "png", f"Chart or figure in {title}")
+    return pack
+
+
+def feed_md(data: bytes, title: str) -> "Pack":
+    """RSS or Atom feed: one section per item with its date, link and summary."""
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(data)
+    strip = lambda tag: tag.rsplit("}", 1)[-1]
+    find = lambda el, name: next((c for c in el if strip(c.tag) == name), None)
+    text = lambda el, name: ((find(el, name).text if find(el, name) is not None else "") or "").strip()
+    channel = find(root, "channel") if strip(root.tag) == "rss" else root
+    pack = Pack(text(channel, "title") or title)
+    for item in (c for c in channel if strip(c.tag) in ("item", "entry")):
+        link = text(item, "link") or ((find(item, "link").get("href") if find(item, "link") is not None else "") or "")
+        summary = text(item, "description") or text(item, "summary") or text(item, "content")
+        pack.md += [f"## {text(item, 'title') or 'Item'}", ""]
+        meta = " · ".join(x for x in (text(item, "pubDate") or text(item, "updated") or text(item, "published"), link) if x)
+        if meta:
+            pack.md += [meta, ""]
+        if summary:
+            pack.md += [_Html2Md().convert(summary), ""]
+    return pack
+
+
+def xml_md(data: bytes, title: str) -> "Pack":
+    pack = Pack(title)
+    pack.md += ["```xml", _decode(data).strip()[:MAX_TEXT], "```", ""]
+    return pack
+
+
+def image_md(data: bytes, title: str, ext: str) -> "Pack":
+    """The picture itself (for the vision model) plus its metadata as text: size, date, camera, description."""
+    pack = Pack(title)
+    try:
+        from PIL import ExifTags, Image
+        img = Image.open(io.BytesIO(data))
+        exif = {ExifTags.TAGS.get(k, k): v for k, v in (img.getexif() or {}).items()}
+        facts = [f"{img.width} × {img.height} pixels"] + [f"{k}: {exif[k]}" for k in (
+            "ImageDescription", "DateTime", "Make", "Model", "Artist", "Copyright") if str(exif.get(k) or "").strip()]
+        pack.md += ["- " + "\n- ".join(facts), ""]
+    except Exception:
+        pass
+    pack.add_image(data, "jpg" if ext in (".jpg", ".jpeg") else ext.lstrip(".") or "png", title)
+    return pack
+
+
+# ---------------------------------------------------------------- containers: zip, EPUB, e-mail
+MAX_MEMBERS = 200
+MAX_MEMBER_BYTES = 25 * 1024 * 1024
+
+
+def _merge(pack: "Pack", name: str, inner: "Pack") -> None:
+    """Add a converted member under its own heading; its headings move one level down."""
+    pack.md += [f"## {name}", ""] + [("#" + line) if line.startswith("#") else line for line in inner.md[1:]] + [""]
+    pack.assets.update(inner.assets)
+
+
+def zip_md(data: bytes, title: str, depth: int = 0) -> "Pack":
+    """A zip archive: every supported file inside is converted, each under its own heading (one level deep)."""
+    pack = Pack(title)
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        members = [i for i in z.infolist() if not i.is_dir() and not i.filename.startswith(("__MACOSX/", "."))
+                   and i.file_size <= MAX_MEMBER_BYTES][:MAX_MEMBERS]
+        skipped = []
+        for info in members:
+            try:
+                _merge(pack, info.filename, convert(info.filename, z.read(info), depth + 1))
+            except Exception as exc:
+                skipped.append(f"{info.filename} ({exc})"[:160])
+        if skipped:
+            pack.md += ["## Not converted", ""] + [f"- {s}" for s in skipped] + [""]
+    return pack
+
+
+def epub_md(data: bytes, title: str) -> "Pack":
+    """An e-book: title and author from the package file, then the chapters in reading order."""
+    import posixpath
+    import xml.etree.ElementTree as ET
+    z = zipfile.ZipFile(io.BytesIO(data))
+    strip = lambda tag: tag.rsplit("}", 1)[-1]
+    container = ET.fromstring(z.read("META-INF/container.xml"))
+    opf_path = next(el.get("full-path") for el in container.iter() if strip(el.tag) == "rootfile")
+    opf = ET.fromstring(z.read(opf_path))
+    meta = {strip(el.tag): (el.text or "").strip() for el in opf.iter() if strip(el.tag) in ("title", "creator")}
+    pack = Pack(meta.get("title") or title)
+    if meta.get("creator"):
+        pack.md += [f"Author: {meta['creator']}", ""]
+    items = {el.get("id"): el.get("href") for el in opf.iter() if strip(el.tag) == "item"}
+    base = posixpath.dirname(opf_path)
+    for ref in (el.get("idref") for el in opf.iter() if strip(el.tag) == "itemref"):
+        href = items.get(ref)
+        if href:
+            try:
+                pack.md += [_Html2Md().convert(_decode(z.read(posixpath.join(base, href)))), ""]
+            except KeyError:
+                continue
+    return pack
+
+
+def email_md(data: bytes, title: str, depth: int = 0) -> "Pack":
+    """An e-mail (.eml): sender, recipients, date and subject, the text (HTML converted), and every attachment that
+    can be converted, each under its own heading."""
+    from email import policy
+    from email.parser import BytesParser
+    msg = BytesParser(policy=policy.default).parsebytes(data)
+    pack = Pack(str(msg.get("subject") or title))
+    pack.md += [f"- {h}: {msg.get(h)}" for h in ("From", "To", "Cc", "Date") if msg.get(h)] + [""]
+    body = msg.get_body(preferencelist=("plain", "html"))
+    if body is not None:
+        content = body.get_content()
+        pack.md += [_Html2Md().convert(content) if body.get_content_type() == "text/html" else content.strip(), ""]
+    for part in msg.iter_attachments():
+        name = part.get_filename() or "attachment"
+        try:
+            _merge(pack, f"Attachment: {name}", convert(name, part.get_payload(decode=True) or b"", depth + 1))
+        except Exception as exc:
+            pack.md += [f"(attachment {name} not converted: {exc})", ""]
+    return pack
+
+
+# ---------------------------------------------------------------- the converter registry (the MarkItDown idea)
+def sniff(data: bytes) -> str:
+    """What the bytes are, whatever the file name says: magic numbers, zip contents, then text shape."""
+    head = data[:4096]
+    if head.startswith(b"%PDF"):
+        return "pdf"
+    if head.startswith(b"PK\x03\x04"):
+        try:
+            names = set(zipfile.ZipFile(io.BytesIO(data)).namelist())
+        except zipfile.BadZipFile:
+            return "binary"
+        if "word/document.xml" in names:
+            return "docx"
+        if "ppt/presentation.xml" in names:
+            return "pptx"
+        if "xl/workbook.xml" in names:
+            return "xlsx"
+        if "META-INF/container.xml" in names:
+            return "epub"
+        return "zip"
+    if head.startswith((b"\x89PNG", b"\xff\xd8\xff", b"GIF8")) or (head[:4] == b"RIFF" and head[8:12] == b"WEBP"):
+        return "image"
+    if b"\x00" in head:
+        return "binary"
+    text = head.decode("utf-8", "ignore").lstrip("﻿ \r\n\t").lower()
+    if text.startswith("{") and '"cells"' in text and '"nbformat"' in _decode(data[:200000]):
+        return "notebook"
+    if text.startswith(("{", "[")):
+        return "json"
+    if text.startswith("<?xml") or text.startswith("<rss") or text.startswith("<feed"):
+        return "feed" if re.search(r"<(rss|feed)[\s>]", text) else "xml"
+    if text.startswith(("<!doctype html", "<html")) or "<body" in text:
+        return "html"
+    if re.match(r"(?:[a-z-]+: .*\r?\n)+", text) and re.search(r"^(from|subject|date): ", text, flags=re.M):
+        return "eml"
+    return "text"
+
+
+@dataclass
+class Converter:
+    """One converter: the extensions and sniffed kinds it accepts, and its function (data, title, ext, depth) -> Pack.
+    Converters are tried in order: the ones the extension AND the content agree on, then the content, then the
+    extension; if one fails the next is tried, and plain text is the last resort (as in MarkItDown)."""
+    name: str
+    exts: tuple
+    kinds: tuple
+    fn: Callable
+
+
+CONVERTERS = [
+    Converter("pdf", (".pdf",), ("pdf",), lambda d, t, e, n: pdf(d, t)),
+    Converter("word", (".docx",), ("docx",), lambda d, t, e, n: docx(d, t)),
+    Converter("powerpoint", (".pptx",), ("pptx",), lambda d, t, e, n: pptx(d, t)),
+    Converter("excel", (".xlsx", ".xlsm"), ("xlsx",), lambda d, t, e, n: xlsx(d, t)),
+    Converter("epub", (".epub",), ("epub",), lambda d, t, e, n: epub_md(d, t)),
+    Converter("notebook", (".ipynb",), ("notebook",), lambda d, t, e, n: notebook_md(d, t)),
+    Converter("e-mail", (".eml",), ("eml",), lambda d, t, e, n: email_md(d, t, n)),
+    Converter("feed", (".rss", ".atom"), ("feed",), lambda d, t, e, n: feed_md(d, t)),
+    Converter("html", (".html", ".htm", ".xhtml"), ("html",), lambda d, t, e, n: html_md(d, t)),
+    Converter("image", (".png", ".jpg", ".jpeg", ".webp", ".gif"), ("image",), lambda d, t, e, n: image_md(d, t, e)),
+    Converter("csv", (".csv", ".tsv"), (), lambda d, t, e, n: csv_md(d, t, "\t" if e == ".tsv" else ",")),
+    Converter("json", (".json",), ("json",), lambda d, t, e, n: json_md(d, t)),
+    Converter("xml", (".xml",), ("xml",), lambda d, t, e, n: xml_md(d, t)),
+    Converter("code", tuple(CODE_EXT), (), lambda d, t, e, n: code_md(d, t, CODE_EXT[e])),
+    Converter("zip", (".zip",), ("zip",), lambda d, t, e, n: zip_md(d, t, n)),
+    Converter("text", tuple(TEXT_EXT), ("text",), lambda d, t, e, n: text_md(d, t)),
+]
+SUPPORTED = sorted({".md", ".markdown"} | {e for c in CONVERTERS for e in c.exts})
+
+
+def _tidy(lines: list[str]) -> list[str]:
+    """Token-efficient Markdown: no trailing spaces, no runs of blank lines."""
+    out: list[str] = []
+    for line in "\n".join(lines).splitlines():
+        line = line.rstrip()
+        if line or (out and out[-1]):
+            out.append(line)
+    return out
+
+
+def convert(filename: str, data: bytes, depth: int = 0) -> "Pack":
+    """Any supported document -> Pack (Markdown + images). Raises ValueError for content no converter accepts."""
+    ext = Path(filename).suffix.lower()
+    title = re.sub(r"[_\-]+", " ", Path(filename).stem).strip() or filename
+    if ext in (".md", ".markdown"):
+        pack = Pack(title)
+        pack.md = _decode(data).splitlines()
+        return pack
+    if depth > 1 and ext in (".zip", ".eml"):
+        raise ValueError("nested archive")
+    kind = sniff(data)
+    # order: extension and content agree > a specific content type (a .xml that is an RSS feed, a .pdf that is
+    # really a Word file) > the extension > a generic content type (json, xml, text) as the last resort
+    both = [c for c in CONVERTERS if ext in c.exts and kind in c.kinds]
+    by_kind = [c for c in CONVERTERS if kind in c.kinds and c not in both]
+    by_ext = [c for c in CONVERTERS if ext in c.exts and c not in both and kind != "binary"]
+    generic = kind in ("json", "xml", "text")
+    errors = []
+    for c in both + ([] if generic else by_kind) + by_ext + (by_kind if generic else []):
+        try:
+            pack = c.fn(data, title, ext, depth)
+            pack.md = _tidy(pack.md)
+            return pack
+        except Exception as exc:   # the next converter may still read it (as in MarkItDown)
+            errors.append(f"{c.name}: {type(exc).__name__}: {str(exc)[:120]}")
+    raise ValueError(f"{filename}: cannot convert ({kind} content; " + ("; ".join(errors) or "unsupported format")
+                     + f"). Supported: {', '.join(SUPPORTED)}")
 
 
 def to_markdown(filename: str, data: bytes) -> tuple[str, bytes, str]:
@@ -438,31 +762,10 @@ def to_markdown(filename: str, data: bytes) -> tuple[str, bytes, str]:
     Returns (stored file name, payload, markdown text): `<file>.md` when the document has no images, else
     `<file>.textpack` (Markdown + image files, read by LightRAG's native engine; images go to the vision model)."""
     ext = Path(filename).suffix.lower()
-    title = re.sub(r"[_\-]+", " ", Path(filename).stem).strip() or filename
-    if ext in (".md", ".markdown"):
-        md = _decode(data)
-        return (filename if ext == ".md" else f"{filename}.md"), md.encode("utf-8"), md
-    if ext == ".pdf":
-        pack = pdf(data, title)
-    elif ext == ".docx":
-        pack = docx(data, title)
-    elif ext == ".pptx":
-        pack = pptx(data, title)
-    elif ext in (".xlsx", ".xlsm"):
-        pack = xlsx(data, title)
-    elif ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
-        pack = image(data, title, ext)
-    elif ext in (".html", ".htm"):
-        pack = html_md(data, title)
-    elif ext in (".csv", ".tsv"):
-        pack = csv_md(data, title, "\t" if ext == ".tsv" else ",")
-    elif ext in CODE_EXT:
-        pack = code_md(data, title, CODE_EXT[ext])
-    elif ext in TEXT_EXT or b"\x00" not in data[:4096]:
-        pack = text_md(data, title)
-    else:
-        raise ValueError(f"{filename}: unsupported format {ext or '(none)'}; supported: {', '.join(SUPPORTED)}")
+    pack = convert(filename, data)
     md = "\n".join(pack.md)
     if pack.assets:
         return f"{filename}.textpack", pack.build(), md
+    if ext in (".md", ".markdown"):
+        return (filename if ext == ".md" else f"{filename}.md"), md.encode("utf-8"), md
     return f"{filename}.md", md.encode("utf-8"), md

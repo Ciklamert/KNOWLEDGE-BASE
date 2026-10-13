@@ -16,7 +16,8 @@
 - An update starts at once and pulls immediately. A request that arrives while the same repository is being updated
   makes that update run once more when it finishes, so nothing is missed and nothing runs twice in parallel. The
   code engine re-indexes by content hash; the multilingual code vectors are updated for changed symbols only.
-- Other triggers: server start, a periodic interval (`BRAIN_SYNC_INTERVAL_MINUTES`), the UI buttons, the CLI and MCP.
+- Other triggers: server start, an update of every repository at least every 24 hours (ADR-027), the UI buttons, the
+  CLI and MCP.
 - The corporate GitLab and TFS addresses are settings (`BRAIN_GITLAB_URL`, `BRAIN_TFS_URL`) with their own read
   tokens. Repositories refer to them as `gitlab:group/project` and `tfs:Project/repo`, expanded at use time, so
   moving a server is one setting change. Credentials are chosen by URL prefix, with `BRAIN_GIT_USER` /

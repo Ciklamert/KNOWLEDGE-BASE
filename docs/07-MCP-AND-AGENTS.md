@@ -23,7 +23,7 @@ indexed (on `search`, `symbol`, `ask`, `enhance_prompt`).
 | `search` | `query`, `scope` (`all`, `code`, `semantic`, `docs`), `detail` (`brief`, `normal`, `full`), `k` | ranked results from the code graph, the code vectors and the documents, no model call; each hit with location, signature, callers, callees and why it matched | brief ≈ 500, normal ≈ 1,000, full ≈ 1,700 tokens |
 | `ask` | `question`, `model` | a grounded answer with citations, researched by a server-side agent | the answer only |
 | `enhance_prompt` | `prompt`, `base_commit`, `changed_files`, `model` | an implementation-ready prompt; with branch facts also branch-drift warnings | the prompt only |
-| `write_requirements` | `topic`, `template`, `language`, `model` | a Software Requirements Specification in plain language (slow) | a document |
+| `write_requirements` | `topic`, `mode` (`existing`, `new`), `template`, `language`, `model` | a Software Requirements Specification in plain language, for what exists or for something new (slow) | a document |
 | `check_branch` | `repo`, `branch`, `base_commit`, `head_commit`, `changed_files` | branch drift report with recommendations | small |
 | `list_repos` | | one line per repository: provider, branch, sets, indexed commit, symbols, overlays, errors | small |
 | `list_documents` | | documents and their processing status | small |

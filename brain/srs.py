@@ -1,5 +1,10 @@
-"""Requirements writer: a Software Requirements Specification (SRS) that any person can read, written from the
-codebases (code graph) and the documents (document graph), following an editable FORMAT (template).
+"""Requirements writer: a Software Requirements Specification (SRS) that any person can read, following an editable
+FORMAT (template), in one of two modes:
+  * existing (default): describe what the system does and what the documents say, from the codebases (code graph)
+    and the documents (document graph);
+  * new: specify a capability that does not exist yet, from the request. The knowledge base is used as context
+    (current behaviour, terms, rules, systems to connect to, what the change affects), not as the source of the
+    requirements; nothing new is claimed to exist.
 
 Formats (data/srs/templates/*.md, editable in the UI) are plain Markdown:
   * `#` line          the document title; {{title}}, {{date}}, {{scope}}, {{language}} are filled in;
@@ -66,6 +71,45 @@ topic and scope. Return ONLY JSON:
  "glossary": [{"term": "<business term>", "definition": "<plain definition>"}]}
 Order capabilities by importance. Use the language requested for names, descriptions and glossary."""
 
+NEW_GROUNDING = """<grounding_rules>
+- Facts about the CURRENT system (what exists, how it works, its rules) come ONLY from <knowledge_base> and your tool
+  results; never invent them. The NEW capability is proposed from the request.
+- When the material says nothing about something the new capability needs, propose sensible behaviour and mark it
+  "to be confirmed"; do not present it as existing.
+- Code shows what the system DOES; documents show what it SHOULD do. Report conflicts that affect the new capability.
+- When the scope is a set of repositories, consider EVERY repository in the set.
+- Write in the SAME LANGUAGE as the request.
+</grounding_rules>"""
+
+NEW_RULES = """<new_feature_rules>
+This specification is for something NEW that the request asks for: it is not implemented yet and may not be
+mentioned in any document. The knowledge base is CONTEXT, not the source of the requirements:
+- Derive the requirements from the request. Choose sensible, testable behaviour for what the request leaves open,
+  and list every choice you made under the open issues as "to be confirmed".
+- Use the knowledge base for the current behaviour, business terms, rules that the new capability must respect,
+  data it reuses, systems it connects to, and the existing capabilities it changes. Use the organisation's own terms.
+- Never claim that the new behaviour already exists. If the evidence shows that part of it exists, say so.
+- Status of each functional requirement: New | Changes existing behaviour | Partly implemented.
+</new_feature_rules>"""
+
+SRS_NEW_SYSTEM = SRS_SYSTEM.replace(agents.GROUNDING, NEW_GROUNDING).replace(
+    "You derive\nrequirements from evidence: what the current system's code DOES and what the organisation's documents SAY.",
+    "You specify NEW\ncapabilities from a request, consistent with what the current system does and what the documents say.") \
+    .replace("**Status:** Implemented | Partly implemented | Documented only (in documents, not\n  found in code) | "
+             "Implemented, not documented.", "**Status:** New | Changes existing behaviour | Partly implemented.") \
+    .replace("- Never invent behaviour, numbers or rules. If something important is unknown, put it under open issues.",
+             "- Never invent facts about the CURRENT system; new behaviour is proposed, and every assumption goes under "
+             "open issues as \"to be confirmed\".") + "\n\n" + NEW_RULES
+
+PLAN_NEW_SYSTEM = """You plan a Software Requirements Specification for a NEW capability that the request asks for (it does
+not exist yet). Identify the CAPABILITIES the new feature needs, from the REQUEST (use the evidence only to name
+things the way the organisation does and to see which existing capabilities are affected). Return ONLY JSON:
+{"system_name": "<plain name of the new capability>", "summary": "<2-3 plain sentences: what is new and why>",
+ "capabilities": [{"name": "<business name>", "description": "<one plain sentence>",
+                   "queries": ["<search query for related existing code or rules>", "<the same in English code terms>"]}],
+ "glossary": [{"term": "<business term>", "definition": "<plain definition>"}]}
+Order capabilities by importance. Use the language requested for names, descriptions and glossary."""
+
 DEFAULT_TEMPLATE = """# Software Requirements Specification - {{title}}
 <!-- FORMAT GUIDE (this comment is removed from the output)
      - "## " starts a section; the "> " lines under it are the instructions the writer follows.
@@ -114,11 +158,63 @@ DEFAULT_TEMPLATE = """# Software Requirements Specification - {{title}}
 """
 
 
+NEW_TEMPLATE = """# Software Requirements Specification - {{title}} (new)
+<!-- FORMAT GUIDE: the format for "something new". Same rules as the default format. -->
+
+| | |
+|---|---|
+| Version | Proposal drafted by AI-BRAIN on {{date}} |
+| Scope | {{scope}} |
+| Status | Proposed: not implemented yet |
+
+## 1. Introduction
+> In plain words: what is requested, why it is needed, who this document is for, and what is in and out of scope.
+
+## 2. Current situation
+> How the related part of the system works today and which business rules already apply, from the evidence only.
+> Say clearly if nothing related exists yet.
+
+## 3. Users and stakeholders
+> A table "User group | What they need from the new capability".
+
+## 4. Proposed solution overview
+> A short story of how people will use the new capability from start to finish, then a bulleted list of its
+> capabilities (one line each, business words only).
+
+## 5. Functional requirements
+> [per capability] One sentence about the purpose of the capability, then its requirements FR-? in EARS form,
+> each with Why, Acceptance criteria (Given/When/Then) and Status (New, Changes existing behaviour, Partly implemented).
+
+## 6. Business rules
+> Numbered rules BR-? the new capability introduces or must respect (existing rules: say so).
+
+## 7. Quality requirements
+> NFR-? for performance, availability, security and privacy, usability, auditability and compliance; values the
+> request does not give are proposed and marked "to be confirmed".
+
+## 8. Impact on the current system
+> Existing capabilities, information and connections to other systems that change, in plain words, and what users of
+> those capabilities will notice.
+
+## 9. Rollout and migration
+> How the new capability can be introduced: existing data to convert, switch-over, training, only if relevant.
+
+## 10. Assumptions and open questions
+> Every choice made where the request was silent, as "to be confirmed", and the questions the business must answer.
+
+## 11. Glossary
+> A table "Term | Meaning" for the business terms used in this document.
+"""
+BUILT_IN = {"default": DEFAULT_TEMPLATE, "new-feature": NEW_TEMPLATE}
+MODES = ("existing", "new")
+
+
 # ---------------------------------------------------------------- formats (templates)
 def _tdir() -> Path:
     d = cfg.path("srs", "templates")
-    if not (d / "default.md").exists():
-        (d / "default.md").write_text(DEFAULT_TEMPLATE, encoding="utf-8")
+    for name, text in BUILT_IN.items():
+        if not (d / f"{name}.md").exists():
+            (d / f"{name}.md").write_text(text, encoding="utf-8")
     return d
 
 
@@ -149,8 +245,8 @@ def save_template(name: str, text: str) -> str:
 
 
 def delete_template(name: str) -> None:
-    if _safe(name) == "default":
-        raise ValueError("the default format cannot be deleted (edit it instead)")
+    if _safe(name) in BUILT_IN:
+        raise ValueError(f"the built-in format '{_safe(name)}' cannot be deleted (edit it instead)")
     (_tdir() / f"{_safe(name)}.md").unlink(missing_ok=True)
 
 
@@ -188,6 +284,7 @@ def documents() -> list[dict]:
         m = json.loads(meta.read_text(encoding="utf-8")) if meta.exists() else {}
         out.append({"name": f.stem, "title": m.get("title", f.stem), "created": f.stat().st_mtime,
                     "scope": m.get("scope"), "template": m.get("template"), "model": m.get("model"),
+                    "mode": m.get("mode", "existing"),
                     "chars": f.stat().st_size})
     return out
 
@@ -227,9 +324,14 @@ def _number(md: str) -> str:
     return md
 
 
-def write(topic: str, set_name: str | None = None, repo_names: list[str] | None = None, template: str = "default",
-          language: str | None = None, model: str | None = None, title: str | None = None,
+def write(topic: str, set_name: str | None = None, repo_names: list[str] | None = None, template: str | None = None,
+          language: str | None = None, model: str | None = None, title: str | None = None, mode: str = "existing",
           log=lambda *a, **k: None) -> dict:
+    """mode: existing = describe what the code does and the documents say; new = specify something new from the
+    request, with the knowledge base as context."""
+    mode = mode if mode in MODES else "existing"
+    template = template or ("new-feature" if mode == "new" else "default")
+    system = SRS_NEW_SYSTEM if mode == "new" else SRS_SYSTEM
     t0 = time.time()
     llm.start_meter()
     deadline = t0 + cfg.get("BRAIN_SRS_TIMEOUT")
@@ -268,9 +370,9 @@ def write(topic: str, set_name: str | None = None, repo_names: list[str] | None 
     log("planning the capabilities", 0.1)
     plan = {}
     try:
-        msg = llm.chat([{"role": "system", "content": PLAN_SYSTEM},
+        msg = llm.chat([{"role": "system", "content": PLAN_NEW_SYSTEM if mode == "new" else PLAN_SYSTEM},
                         {"role": "user", "content": f"{ctx.describe()}\n{evidence}\n<knowledge_base>\n{search.render(seed, 12000)}\n"
-                                                    f"</knowledge_base>\n<request>Topic: {topic}\nLanguage: {lang}\n"
+                                                    f"</knowledge_base>\n<request>{'New capability requested' if mode == 'new' else 'Topic'}: {topic}\nLanguage: {lang}\n"
                                                     f"At most {cfg.get('BRAIN_SRS_MAX_CAPABILITIES')} capabilities.</request>"}],
                        model, timeout=min(remaining(), cfg.get("BRAIN_LLM_TIMEOUT")), max_tokens=2000, temperature=0.1)
         plan = _json(msg["content"])
@@ -295,7 +397,7 @@ def write(topic: str, set_name: str | None = None, repo_names: list[str] | None 
         r = search.search(q, "all", set_name, repo_names)
         note_sources(cap["name"], r)
         instr = " ".join(s["instructions"] for s in per_cap) or "Functional requirements for this capability."
-        res = agents.run_agent("srs", SRS_SYSTEM,
+        res = agents.run_agent("srs", system,
                                f"<plan>\n{plan_text}\n</plan>\n<task>Write the part for the capability "
                                f"\"{cap['name']}\" ({cap.get('description', '')}). Section instructions: {instr}\n"
                                f"Start with a line '### {cap['name']}'. Language: {lang}.</task>",
@@ -318,7 +420,7 @@ def write(topic: str, set_name: str | None = None, repo_names: list[str] | None 
             body.append(f"## {s['heading']}\n\n_(not written: time budget reached)_")
             continue
         log(f"writing section: {s['heading']}", 0.75 + 0.2 * others.index(s) / max(1, len(others)))
-        res = agents.run_agent("srs", SRS_SYSTEM,
+        res = agents.run_agent("srs", system,
                                f"<plan>\n{plan_text}\n</plan>\n<capability_requirements>\n{written[:14000]}\n"
                                f"</capability_requirements>\n<glossary_candidates>{json.dumps(plan.get('glossary', []), ensure_ascii=False)}"
                                f"</glossary_candidates>\n<task>Write ONLY the body of the section \"{s['heading']}\" "
@@ -333,9 +435,12 @@ def write(topic: str, set_name: str | None = None, repo_names: list[str] | None 
     title = title or system_name
     fill = {"title": title, "date": dt.date.today().isoformat(), "scope": scope_text, "language": lang}
     head = re.sub(r"\{\{(\w+)\}\}", lambda m: fill.get(m.group(1), m.group(0)), header)
-    trace = ["## Appendix - Traceability (for the technical team)",
-             "Where the requirements of each capability were found. The body of the document is written for "
-             "non-technical readers; these references let developers and testers verify it."]
+    trace = (["## Appendix - Related existing system (for the technical team)",
+              "The existing code and documents each new capability touches or must stay consistent with. The body "
+              "of the document is written for non-technical readers."] if mode == "new" else
+             ["## Appendix - Traceability (for the technical team)",
+              "Where the requirements of each capability were found. The body of the document is written for "
+              "non-technical readers; these references let developers and testers verify it."])
     for cap, refs in sources.items():
         if refs:
             trace.append(f"- **{cap}**: " + ", ".join(sorted(refs)[:12]))
@@ -343,7 +448,7 @@ def write(topic: str, set_name: str | None = None, repo_names: list[str] | None 
     md = re.sub(r"\{\{(\w+)\}\}", lambda m: fill.get(m.group(1), m.group(0)), md)
     name = f"{dt.datetime.now():%Y%m%d-%H%M}-" + (re.sub(r"[^\w]+", "-", title.lower()).strip("-")[:50] or "srs")
     (_odir() / f"{name}.md").write_text(md, encoding="utf-8")
-    meta = {"title": title, "topic": topic, "scope": scope_text, "template": template, "language": lang,
+    meta = {"title": title, "topic": topic, "mode": mode, "scope": scope_text, "template": template, "language": lang,
             "model": model, "capabilities": [c["name"] for c in caps], "errors": errors,
             "usage": llm.read_meter(), "seconds": round(time.time() - t0, 1)}
     (_odir() / f"{name}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")

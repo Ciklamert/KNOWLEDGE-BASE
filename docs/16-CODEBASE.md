@@ -121,19 +121,30 @@ the current setting, start). The loader accepts a module name in `brain/provider
   the cached extraction results), `markdown()`.
 
 ## 9. brain/providers/convert.py
-`to_markdown(filename, data)` turns every supported format into Markdown and returns the stored name, the payload
-and the Markdown:
-- **PDF** (pdfplumber + pypdfium2): text in reading order, headings from font sizes, ruled tables as HTML, embedded
-  pictures cropped at 2× (smaller than 64 pixels: skipped), pages without a text layer and pages with charts or
-  diagrams drawn as vector paths rendered whole for the vision model.
-- **Word**: headings from styles, lists, bold and italic, tables, pictures.
-- **PowerPoint**: titles, bullets, tables, chart data, pictures, speaker notes.
-- **Excel**: each sheet as HTML tables of 200 rows (header repeated), at most 2,000 rows and 40 columns per sheet.
-- **HTML** (dependency-free converter), **CSV/TSV** (tables), **source code and configuration files** (fenced code
-  blocks), **text** (UTF-8, then Turkish Windows code page cp1254, then Latin-1), **Markdown** (as is), **images**.
-- A picture repeated more than twice (logos, page headers) is kept only twice.
-- With pictures the result is a `.textpack` (a zip with `text.md` and `assets/`), otherwise `.md`. Unknown binary
-  formats are rejected with the list of supported formats.
+Every document becomes Markdown, following the idea of Microsoft's MarkItDown ([ADR-019](decisions/ADR-019-everything-to-markdown.md)):
+- `convert(filename, data)` is the one entry point; `to_markdown()` wraps it and returns the stored name (`<file>.md`,
+  or `<file>.textpack` = a zip with `text.md` and `assets/` when there are pictures), the payload and the Markdown.
+- `sniff(data)` tells what the bytes are, whatever the name says: magic numbers (PDF, PNG, JPEG, GIF, WEBP), the
+  files inside a zip (Word, PowerPoint, Excel, EPUB, plain zip), and the shape of text (notebook, JSON, RSS/Atom,
+  XML, HTML, e-mail, text). Bytes with NUL characters that no converter accepts are rejected.
+- `CONVERTERS` is the registry: each `Converter` names the extensions and content kinds it accepts. They are tried in
+  this order: extension and content agree; a specific content kind (a `.xml` that is an RSS feed, a `.pdf` that is
+  really a Word file); the extension; a generic content kind (JSON, XML, text). If one fails, the next is tried.
+- Converters: **PDF** (pdfplumber + pypdfium2: reading order, headings from font sizes, ruled tables as HTML, pictures
+  cropped at 2× (smaller than 64 pixels skipped), scanned pages and pages with drawn charts rendered whole for the
+  vision model, page headers and footers removed); **Word** (headings from styles, lists, bold and italic, tables,
+  pictures); **PowerPoint** (titles, bullets, tables, chart data, pictures, speaker notes); **Excel** (HTML tables of
+  200 rows, header repeated, at most 2,000 rows and 40 columns per sheet); **HTML** (headings, nested lists, links,
+  bold and italic, code blocks, image alt text, tables; navigation, side bars, forms, footers and scripts dropped);
+  **CSV/TSV**; **JSON** (pretty-printed); **XML**; **RSS/Atom** (one section per item); **Jupyter notebooks**
+  (Markdown cells, code cells in the notebook's language, shortened text outputs, image outputs); **EPUB** (chapters
+  in reading order); **e-mail** `.eml` (headers, text, every convertible attachment); **zip** (every file inside, one
+  level deep, at most 200 files of 25 MB); **images** (the picture for the vision model plus size, date, camera and
+  description from EXIF); **source code and configuration** (fenced blocks); **text** (UTF-8, then cp1254, then
+  Latin-1; at most 2 million characters).
+- `_tidy()` keeps the output token-efficient: no trailing spaces, no runs of blank lines; a picture repeated more than
+  twice (logos) is kept only twice; `_drop_repeated()` removes PDF page headers and footers (lines at the top or
+  bottom of at least 3 pages and half of all pages).
 
 ## 10. brain/query.py
 Prompt analysis ([05](05-SEARCH-ASK-ENHANCE.md) §2): tokeniser (words, identifiers, paths, quoted phrases), English
@@ -168,15 +179,18 @@ repeated identical calls answered with a note, switch to one grounded call on HT
 ## 14. brain/srs.py
 The requirements writer ([17](17-REQUIREMENTS-WRITER.md)): `SRS_SYSTEM`, `PLAN_SYSTEM`, `DEFAULT_TEMPLATE`; formats
 (`templates`, `get_template`, `save_template`, `delete_template`, `parse`); outputs (`documents`, `read`, `delete`);
-`write()`: evidence → plan → one part per capability → the other sections → placeholders, numbering and traceability
-appendix → `data/srs/output/<timestamp>-<title>.md` plus a `.json` with metadata.
+`write()` (mode `existing` or `new`): evidence → plan → one part per capability → the other sections →
+placeholders, numbering and appendix → `data/srs/output/<timestamp>-<title>.md` plus a `.json` with metadata. For
+something new it uses `SRS_NEW_SYSTEM` (its own grounding rules `NEW_GROUNDING` and `NEW_RULES`), `PLAN_NEW_SYSTEM`
+and the built-in `NEW_TEMPLATE` (`new-feature`).
 
 ## 15. brain/repos.py
 Registry and sets (the implicit set `all`), `resolve_scope()` (a branch overlay replaces its repository when
 `branch` matches), `git()` (token as an `http.extraHeader`, `GIT_TERMINAL_PROMPT=0`, no console window on
 Windows, credentials masked in errors, `BRAIN_GIT_TIMEOUT`), `update_checkout()`, `sync_repo()` (update, index,
 code vectors, state), `sync_all()` (one at a time), `request_sync()` (starts at once; a request during a running
-update makes it run once more), `watch_local()` (re-indexes local checkouts whose tracked branch moved),
+update makes it run once more), `watch_local()` (re-indexes local checkouts whose tracked branch moved), `refresh_stale()` and `due()` (every
+repository at least every `BRAIN_SYNC_INTERVAL_MINUTES`, 24 hours by default),
 `hook_script()` (the git hook `brain hook` installs), `index_branch()` /
 `remove_branch()` (git worktrees), `state()` in `data/state.json`, `webhook_info()`, `overview()`.
 

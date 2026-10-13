@@ -72,7 +72,8 @@ Every file is described in [16-CODEBASE.md](16-CODEBASE.md).
    indexed (incrementally), and its multilingual code vectors are updated.
 5. `/api/status` reports `ready: true` when both engines and the corporate API are ready, and the log prints
    `READY`. The UI answers from the first second and shows every job with its progress and errors.
-6. If `BRAIN_SYNC_INTERVAL_MINUTES` is above 0, all repositories are updated again at that interval.
+6. Every repository is updated at least every `BRAIN_SYNC_INTERVAL_MINUTES` (default 24 hours): once a minute the
+   server updates the repositories whose last update is older than that.
 
 ### 3.2 Search (no chat call)
 1. Prompt analysis: stop-words out, key terms ranked, variants and concepts built (`brain/query.py`).

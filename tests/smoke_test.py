@@ -210,6 +210,14 @@ def main():
     check("requirements specification written", j["state"] == "done" and "FR-001" in res.get("markdown", "")
           and "Traceability" in res.get("markdown", ""), (j.get("error"), res.get("errors")))
     check("specification listed", any(d["name"] == res.get("name") for d in c.get("/api/srs/documents").json()["documents"]))
+    r = ui.post("/api/srs", json={"topic": "customers can pay invoices in instalments", "mode": "new",
+                                  "target": "set:payments"}).json()
+    j = wait_job(ui, r["job"], 600)
+    res = j.get("result") or {}
+    check("requirements for something new written (own format, related existing system)", j["state"] == "done"
+          and res.get("mode") == "new" and res.get("template") == "new-feature"
+          and "Related existing system" in res.get("markdown", "") and "Impact on the current system" in res.get("markdown", ""),
+          (j.get("error"), res.get("template"), res.get("errors")))
 
     # ---- settings round trip
     old = next(s for s in c.get("/api/settings").json()["settings"] if s["key"] == "BRAIN_SEARCH_TOP_K")["value"]

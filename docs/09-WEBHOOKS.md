@@ -75,7 +75,8 @@ means TFS (secret = basic-auth password, any user name). Anything else → 400.
 - Local-path repositories are re-indexed after every pull of their tracked branch, without any webhook
   ([04-REPOSITORIES-AND-SETS.md](04-REPOSITORIES-AND-SETS.md) §4).
 - `brain hook` in a developer checkout updates AI-BRAIN after every `git pull` of the tracked branch.
-Set `BRAIN_SYNC_INTERVAL_MINUTES` (for example 10): all repositories are fetched and indexed at that interval. An
+Every repository is updated at least every 24 hours anyway (`BRAIN_SYNC_INTERVAL_MINUTES`, default 1440); set it
+lower (for example 10) to update more often when webhooks are not possible. An
 unchanged repository costs one fetch and a hash check.
 
 ## 7. Troubleshooting

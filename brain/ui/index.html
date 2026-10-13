@@ -117,8 +117,9 @@
 
   <!-- ======================================================= requirements writer -->
   <section id="srs" class="view">
-    <header class="page-head"><h1>Requirements writer</h1><p class="lede">Writes a Software Requirements Specification from the code and the documents, in plain language that anyone can read, following the format you choose.</p></header>
+    <header class="page-head"><h1>Requirements writer</h1><p class="lede">Writes a Software Requirements Specification in plain language that anyone can read, following the format you choose: either for what already exists (from the code and the documents) or for something new you describe (the code and documents are used as context).</p></header>
     <div class="box">
+      <div class="seg" id="q-mode"><button data-v="existing" class="on" title="Describe what the code does and the documents say">What exists</button><button data-v="new" title="Specify a new capability from your request; existing code and documents are used as context">Something new</button></div>
       <label>What should be specified?<input id="r-topic" placeholder="e.g. the whole billing system / refunds / müşteri iade süreci"></label>
       <div class="row">
         <label class="inl">Scope <select class="scope-select" id="q-target" title="One repository, or a set: then every repository of the set is searched"></select></label>

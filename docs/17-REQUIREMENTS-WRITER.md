@@ -1,24 +1,33 @@
 # 17 - Requirements writer (Software Requirements Specification)
 
 UI **Requirements**, `POST /api/srs`, MCP `write_requirements`. It writes a Software Requirements Specification (SRS)
-from the codebases and the documents, in plain language that business people, testers and managers understand,
-following a **format** you choose and can edit. Code paths and document names appear only in a traceability appendix
-for the technical team.
+in plain language that business people, testers and managers understand, following a **format** you choose and can
+edit. Code paths and document names appear only in an appendix for the technical team.
+
+It works in two modes:
+
+| Mode | UI | Writes | The code and documents are |
+|---|---|---|---|
+| `existing` (default) | *What exists* | what the system does and what the documents say | the source of every requirement |
+| `new` | *Something new* | a capability that is not implemented and may not be mentioned anywhere, from your request | context: the current behaviour, the organisation's terms, rules the new capability must respect, data it reuses, systems it connects to, and the capabilities it changes |
 
 ## 1. Using it
-1. Describe what to specify: a whole system ("the billing system"), a module, or one feature ("müşteri iadeleri").
+1. Choose the mode, then describe what to specify: for *What exists* a whole system ("the billing system"), a module,
+   or one feature ("müşteri iadeleri"); for *Something new* the capability you want ("customers can pay invoices in
+   instalments", "taksitli ödeme").
 2. Choose the **Scope**: one repository, or a set (every repository of the set is examined).
-3. Choose the **Format**, the **Language** (*Same as the request*, English, Turkish; the API accepts any language
-   name) and the **Model**.
+3. Choose the **Format** (*Something new* selects `new-feature`), the **Language** (*Same as the request*,
+   English, Turkish; the API accepts any language name) and the **Model**.
 4. Press **Write specification**. The job shows every step: evidence, plan, each capability, each section.
 5. Read the result, then **Copy Markdown**, **Download .md**, or **Add to document graph** so that search, ask and
    enhance can use it. Every specification is listed under *Written specifications* and kept in
-   `data/srs/output/` with a `.json` file of metadata (title, topic, scope, format, language, model, capabilities,
-   errors, duration).
+   `data/srs/output/` with a `.json` file of metadata (title, topic, mode, scope, format, language, model,
+   capabilities, errors, model calls and tokens, duration).
 
 ## 2. Formats
-Formats are Markdown files in `data/srs/templates/`, edited under *Edit formats*. The built-in `default` format is
-created on first use. Example:
+Formats are Markdown files in `data/srs/templates/`, edited under *Edit formats*. Two built-in formats are created on
+first use and can be edited but not deleted: `default` (for what exists) and `new-feature` (for something new).
+Example:
 
 ```markdown
 # Software Requirements Specification - {{title}}
@@ -51,6 +60,11 @@ The `default` format follows the ISO/IEC/IEEE 29148 SRS outline, simplified for 
 To adapt it to a company template: *New from default*, change the sections and instructions, give it a name,
 *Save format*. A format must contain at least one `##` section; `default` can be edited but not deleted.
 
+The `new-feature` format: 1. Introduction, 2. Current situation (from the evidence only; says so when nothing related
+exists), 3. Users and stakeholders, 4. Proposed solution overview, 5. Functional requirements (per capability),
+6. Business rules, 7. Quality requirements, 8. Impact on the current system, 9. Rollout and migration,
+10. Assumptions and open questions, 11. Glossary. Its header says "Proposed: not implemented yet".
+
 ## 3. How a specification is written
 1. **Evidence**: a search for the topic with model query expansion ([05](05-SEARCH-ASK-ENHANCE.md) §3), an
    architecture overview of every repository in scope (at most 8: languages, packages, entry points, routes), and
@@ -64,7 +78,13 @@ To adapt it to a company template: *New from default*, change the sections and i
 4. **Each other section**: one call with the section's instructions, the plan, the capability texts and the
    glossary candidates, so the document stays consistent.
 5. **Assembly**: placeholders filled; requirement IDs numbered in order (`FR-001`, `BR-001`, `NFR-001` …); the
-   traceability appendix lists, per capability, the code locations and documents the requirements came from.
+   appendix lists, per capability, the code locations and documents the requirements came from (*Traceability*), or,
+   for something new, the existing code and documents each new capability touches (*Related existing system*).
+
+For **something new** the same steps run with different instructions: the plan takes its capabilities from the
+request, not from the evidence; the searches look for the related existing code, rules and documents; and the writer
+proposes behaviour where the request is silent, marking every such choice "to be confirmed" under the open issues.
+It never claims that the new behaviour exists; if the evidence shows that part of it does, the requirement says so.
 
 The whole run is bounded by `BRAIN_SRS_TIMEOUT`. When less than a minute is left, remaining capabilities are skipped;
 when less than 30 seconds are left, remaining sections are marked "not written"; both are reported in `errors`.
@@ -76,11 +96,13 @@ when less than 30 seconds are left, remaining sections are marked "not written";
   "While …, the system shall …", "If …, then the system shall …", "Where …, the system shall …".
 - ISO/IEC/IEEE 29148 quality: necessary, unambiguous (no "fast", "user-friendly", "etc.", "and/or"), complete,
   singular, feasible, verifiable, consistent.
-- Every functional requirement has **Why**, **Acceptance criteria** (Given / When / Then) and **Status**:
-  *Implemented*, *Partly implemented*, *Documented only* (in documents, not found in code) or *Implemented, not
-  documented*. Status makes the gaps between the documents and the running system visible.
-- The shared grounding rules apply: nothing invented; unknowns go to "Assumptions, conflicts and open issues";
-  conflicts between code and documents are reported.
+- Every functional requirement has **Why**, **Acceptance criteria** (Given / When / Then) and **Status**. For what
+  exists: *Implemented*, *Partly implemented*, *Documented only* (in documents, not found in code) or *Implemented,
+  not documented*, which makes the gaps between the documents and the running system visible. For something new:
+  *New*, *Changes existing behaviour* or *Partly implemented*.
+- For what exists, the shared grounding rules apply: nothing invented; unknowns go to "Assumptions, conflicts and
+  open issues"; conflicts between code and documents are reported. For something new, facts about the current
+  system still come only from the evidence; the new behaviour is proposed and its open points are listed.
 
 ## 5. Settings and cost
 `BRAIN_SRS_MODEL`, `BRAIN_SRS_TIMEOUT` (total, default 1800 s), `BRAIN_SRS_MAX_CAPABILITIES` (12),

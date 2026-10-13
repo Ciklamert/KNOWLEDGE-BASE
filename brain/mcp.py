@@ -62,8 +62,11 @@ TOOLS = [
                             "plan, acceptance criteria). Pass repo/base_commit/changed_files for branch warnings.",
           {"prompt": _S, "base_commit": _S, "changed_files": {"type": "array", "items": _S}, "model": _S, **BRANCH},
           ["prompt"]),
-    _tool("write_requirements", "A Software Requirements Specification in plain language (slow: many LLM calls).",
-          {"topic": _S, "template": _S, "language": _S, "model": _S}, ["topic"]),
+    _tool("write_requirements", "A Software Requirements Specification in plain language (slow: many LLM calls). "
+                                "mode: existing (what the code and documents contain) or new (specify something new "
+                                "from the topic).",
+          {"topic": _S, "mode": {"type": "string", "enum": ["existing", "new"]}, "template": _S, "language": _S,
+           "model": _S}, ["topic"]),
     _tool("check_branch", "Drift of your branch against the indexed main: commits behind, conflict-risk files, what "
                           "to do. Pass branch, base_commit (git merge-base HEAD origin/main) and changed_files "
                           "(git diff --name-only origin/main...HEAD + git status --porcelain).",
@@ -97,8 +100,8 @@ def call_tool(name: str, a: dict) -> str:
                            changed_files=a.get("changed_files"), model=a.get("model"))
         return r["enhanced"]
     if name == "write_requirements":
-        r = srs.write(a["topic"], *_scope(a)[:2], a.get("template") or "default", a.get("language"),
-                      a.get("model"))
+        r = srs.write(a["topic"], *_scope(a)[:2], a.get("template"), a.get("language"), a.get("model"),
+                      mode=a.get("mode") or "existing")
         return r["markdown"] + (f"\n\n(notes: {'; '.join(r['errors'])})" if r["errors"] else "")
     if name == "check_branch":
         return drift.render(drift.check(a["repo"], a.get("branch"), a.get("base_commit"), a.get("changed_files"),

@@ -13,6 +13,7 @@
 - **Plain language with traceability**: EARS sentences; Why, Acceptance criteria and Status per requirement; code and
   document references only in an appendix. *Status* shows the gaps between the documents and the running system.
 - The result is saved (`data/srs/output/`), downloadable, and can be published into the document graph.
+- Two modes: what exists (this record) and something new (ADR-026).
 
 ## Alternatives
 | Option | Why not |

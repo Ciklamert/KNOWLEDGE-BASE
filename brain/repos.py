@@ -279,6 +279,28 @@ def watch_local() -> None:
                 request_sync(r["name"], f"local {r['branch']} moved (pull)")
 
 
+def refresh_stale() -> None:
+    """Every repository is updated at least every BRAIN_SYNC_INTERVAL_MINUTES (default 24 hours): once a minute,
+    repositories whose last update (successful or failed) is older than that get an update. Webhooks, pulls and
+    buttons reset the clock, so a busy repository is not updated twice. Runs for ever."""
+    while True:
+        time.sleep(60)
+        minutes = cfg.get("BRAIN_SYNC_INTERVAL_MINUTES")
+        if minutes <= 0:
+            continue
+        for name in due([r["name"] for r in all_repos()], state()["repos"], minutes, time.time()):
+            with _flags:
+                busy = name in _active
+            if not busy:
+                request_sync(name, f"scheduled: every {minutes // 60 or minutes} {'h' if minutes >= 60 else 'min'}")
+
+
+def due(names: list[str], known: dict, minutes: int, now: float) -> list[str]:
+    """Repositories whose last update (successful or failed) is at least `minutes` old, or that were never updated."""
+    return [n for n in names if now - max((known.get(n) or {}).get("indexed_at") or 0,
+                                          (known.get(n) or {}).get("failed_at") or 0) >= minutes * 60]
+
+
 def hook_script(repo: str, branch: str, python: str, brain: str) -> str:
     """A git hook (post-merge = after every `git pull`, post-rewrite = after `git pull --rebase`) that asks AI-BRAIN
     to update `repo` when the pulled branch is the tracked one. Runs in the background; never blocks git."""

@@ -82,7 +82,7 @@ One entry and no sets. Every request covers it.
 | *Update* / *Update all now* in the UI, `brain sync [name]`, MCP `sync_repo`, `POST /api/repos/{name}/sync`, `POST /api/repos/sync` | that repository / all |
 | a pull (or merge, or commit) of the tracked branch in a **local checkout** | that repository, within `BRAIN_WATCH_LOCAL_SECONDS` (default 30): the server notices that the branch head moved |
 | a `git pull` of the tracked branch in **any developer checkout** with the AI-BRAIN git hook (`brain hook`) | that repository, right after the pull |
-| `BRAIN_SYNC_INTERVAL_MINUTES` above 0 | all repositories, periodically (when webhooks are not possible) |
+| every 24 hours (`BRAIN_SYNC_INTERVAL_MINUTES`, default 1440; 0 = off) | every repository whose last update is older than that; checked every minute, so it also catches up after a restart |
 
 An update starts at once and pulls immediately: there is no waiting window. If another request for the same
 repository arrives while its update is running (a merge usually fires a merge and a push event, or a developer
