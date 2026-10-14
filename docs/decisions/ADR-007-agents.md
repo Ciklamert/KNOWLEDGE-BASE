@@ -1,10 +1,13 @@
 # ADR-007 - Ask and enhance agents: one tool-calling loop with graceful degradation
 
-**Status:** accepted · **Requirements:** R11, R12, R17, R9, R3
+**Status:** accepted · **Requirements:** R11, R12, R17, R9, R3, R36
 
 ## Decision
-One loop (`brain/agents.py` `run_agent`) serves ask, enhance, the project guide and the requirements writer; they differ in system
-prompt (ADR-022) and limits:
+One loop (`brain/agents.py` `run_agent`) serves ask, enhance, the project guide and the requirements writer; they
+differ in system prompt (ADR-022) and limits. The enhancer has one prompt for every kind of request: it classifies
+the request (bug fix, new feature, refactor, ...) and looks for what that class needs; for a new feature not the
+feature itself but where it plugs in, the similar existing feature to imitate, and the conventions and rules to
+follow. People do not have to pick a mode.
 1. the conversation is seeded with the full search (ADR-006, ADR-017), so even a one-shot answer is grounded;
 2. the model may call read-only tools (`search`, `semantic`, `docs`, `symbol`, `trace`, `outline`, `read`, `grep`,
    `files`, `overview`) through OpenAI tool calling: at most `*_MAX_STEPS` rounds, 4 calls per round, 8,000

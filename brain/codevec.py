@@ -46,6 +46,7 @@ def _load(project: str) -> dict | None:
     z = np.load(f, allow_pickle=False)
     data = {"qn": z["qn"].tolist(), "hash": z["hash"].tolist(), "vec": z["vec"],
             "model": str(z["model"]) if "model" in z.files else ""}
+    data["row"] = {q: i for i, q in enumerate(data["qn"])}
     with _lock:
         _cache[project] = (mtime, data)
     return data
@@ -77,7 +78,7 @@ def update(project: str, log=lambda msg, progress=None: None) -> dict:
     vec = None
     if old and reuse:
         dim = old["vec"].shape[1]
-    batch = max(1, cfg.get("BRAIN_CODE_VECTORS_BATCH"))
+    batch = max(1, cfg.get("BRAIN_EMBED_BATCH"))
     chunks = [todo[i:i + batch] for i in range(0, len(todo), batch)]
     done = [0]
     results: dict[int, list[float]] = {}
@@ -90,7 +91,7 @@ def update(project: str, log=lambda msg, progress=None: None) -> dict:
         log(f"{project}: code vectors {done[0]}/{len(todo)}", done[0] / max(1, len(todo)))
     if chunks:
         log(f"{project}: embedding {len(todo)} changed symbols ({len(reuse)} reused)")
-        with ThreadPoolExecutor(max(1, cfg.get("BRAIN_CODE_VECTORS_PARALLEL"))) as pool:
+        with ThreadPoolExecutor(max(1, cfg.get("BRAIN_EMBED_PARALLEL"))) as pool:
             list(pool.map(work, chunks))
     if results:
         dim = len(next(iter(results.values())))
@@ -128,6 +129,17 @@ def search(query_vector: list[float], projects: list[str], k: int) -> list[dict]
             hits.append(h)
     hits.sort(key=lambda h: -h["similarity"])
     return providers.code().with_code(hits[:k])
+
+
+def vectors(hits: list[dict]) -> dict[tuple[str, str], np.ndarray]:
+    """The stored vectors of these hits, {(project, qn): unit vector}; hits without one are left out."""
+    out = {}
+    for h in hits:
+        data = _load(h["project"])
+        i = data["row"].get(h["qn"]) if data else None
+        if i is not None:
+            out[(h["project"], h["qn"])] = data["vec"][i].astype(np.float32) / 127.0
+    return out
 
 
 def remove(project: str) -> None:

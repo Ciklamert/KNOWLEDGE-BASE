@@ -8,7 +8,7 @@
   (only the changed lines; comments and order kept; atomic write) and restarts the affected engine.
 - Precedence: file, then process environment, then default. The file wins so that a change made in the UI can never
   be silently overridden by an old environment variable.
-- Raw engine variables pass through: `LIGHTRAG__NAME` and `CBM__NAME`, so every engine option is reachable,
+- Raw code-engine variables pass through: `CBM__NAME`, so every code-engine option is reachable,
   including ones AI-BRAIN does not know.
 - Repositories and sets are structured data and live in `repos.json` (another path with `BRAIN_REPOS_FILE`), also
   edited in the UI.

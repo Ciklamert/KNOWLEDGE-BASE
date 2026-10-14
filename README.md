@@ -4,7 +4,9 @@ AI-BRAIN is a knowledge base for software teams in an air-gapped corporate netwo
 
 - a **code graph** of every configured repository (symbols, calls, inheritance, routes, imports),
 - **code vectors** that find code by meaning, also when the question is in Turkish and the code is in English,
-- a **document graph** of the business documents (rules, specifications, decisions, procedures).
+- a **document graph** of the business documents (rules, specifications, decisions, procedures), built like the
+  code graph: from the documents' structure, keywords, vectors and concepts, without a model call per chunk, so it
+  is fast even on a slow corporate API.
 
 People use it through a web UI. AI coding agents (Claude Code, opencode, pi, Cursor and others) use it through
 MCP or a REST API. The only outbound connection is to the organisation's **OpenAI-compatible API**
@@ -20,8 +22,8 @@ MCP or a REST API. The only outbound connection is to the organisation's **OpenA
  │  search (no model call) ─┬─► code graph + code vectors ─► codebase-memory-mcp (native binary)│
  │  ask agent, guide ───────┤   multilingual code vectors  ─► data/codevec (corporate embeddings)│
  │  enhance-prompt agent ───┤                                                                  │
- │  requirements writer ────┴─► document graph ─────────────► LightRAG (child on 127.0.0.1)     │
- │  branch drift check · branch overlays · webhook-driven updates of the tracked branch         │
+ │  requirements writer ────┴─► document graph ─────────────► built-in engine (SQLite, no LLM)  │
+ │  branch drift · overlays · updates on merge, on pull and every 24 h · live UI updates         │
  └───────────────────────────────────────────┬─────────────────────────────────────────────────┘
                                              ▼
                        corporate OpenAI-compatible API (chat, embeddings, optional vision)
@@ -33,16 +35,18 @@ MCP or a REST API. The only outbound connection is to the organisation's **OpenA
 |---|---|---|
 | **Search** | Analyses the prompt (stop-words out, key terms ranked), searches the code graph, both code vector indexes and the document graph, connects business terms from documents to code, adds callers and callees of the best hits, and re-ranks everything by meaning. | none (embedding calls only) |
 | **Ask** | An agent researches with read-only tools and answers in the question's language, citing code (`repo/path:line`) and documents. | expansion + a few |
-| **Enhance prompt** | An agent turns a short request into an implementation-ready prompt for a coding agent: task, context, business rules, impact, plan, acceptance criteria, out of scope, open questions, branch warnings. | expansion + a few |
-| **Requirements writer** | Writes a Software Requirements Specification in plain language, following an editable Markdown format: for what exists (from code and documents), or for something new you describe (with code and documents as context). | several per capability |
-| **Documents** | Every upload becomes Markdown first, the MarkItDown way: PDF, Word, PowerPoint, Excel, HTML, CSV, JSON, XML, RSS, notebooks, EPUB, e-mails with attachments, zip archives, images, code and text, recognised by content. | extraction by LightRAG |
+| **Enhance prompt** | An agent turns any request (a bug to fix, a new feature, a change, a refactor, an investigation) into an implementation-ready prompt for a coding agent. It recognises the kind of request itself: for a bug it traces the failing path and the likely root cause, for a new feature it shows what exists today, where it fits and what to imitate. Task, what exists, analysis, business rules, impact, plan, acceptance criteria, out of scope, open questions, branch warnings. | expansion + a few |
+| **Impact** | What a change reaches before and after editing: the code that depends on the changed files or symbols, the routes that lead there, the tests to run and the business rules that name the code (MCP `impact`, `POST /api/impact`, `brain impact` in CI). | none |
+| **Decision memory** | Decisions, rules, gotchas and conventions that people and agents should not relearn: typed, dated, searchable like documents, replaced by topic, marked stale when their code is gone (MCP `remember` / `recall`, Documents → *Memory*). | none |
+| **Requirements writer** | Turns system requirements, a new idea or a topic of the current system (pasted or loaded from a file) into software requirements checked against the current code and documents, with one request field and no modes; always in your organisation's own format (typed, or loaded from a Word/PDF template). | several per capability |
+| **Documents** | Every upload becomes Markdown first, the MarkItDown way (PDF with tables and pictures, Word, PowerPoint, Excel, HTML, CSV, JSON, XML, RSS, notebooks, EPUB, e-mails with attachments, zip archives, images, code and text, recognised by content), is split into passages along headings and pages, and is searchable at once: keywords, concepts and links between documents. | one batched embedding pass; one vision call per picture |
 | **Code tools for agents** | `symbol`, `outline`, `read`, `grep`, `files`, `trace`, `overview`: exact answers in a few hundred tokens, across all repositories, without a local checkout. | none |
 | **Learn a project** | The structure of a repository (languages, packages, entry points, routes, most-connected code) and a written guide for newcomers: what it does, how it is built, main flows, where to start reading. | none / a few |
 | **Branch drift** | Compares a developer's branch with the indexed `main` and recommends what to do (rebase, trust local files, index the branch). | none |
 
 Every function is available in the **web UI**, the **REST API** and **MCP**. The UI also shows both graphs, uploads
 and removes documents, manages repositories, sets and webhooks, edits every setting, and shows the state,
-progress and errors of every background job. A merge into a repository's tracked branch on **GitLab** or
+progress and errors of every background job, updated live. A merge into a repository's tracked branch on **GitLab** or
 **TFS / Azure DevOps Server** updates its code graph through a webhook, and so does every pull of that branch (local
 checkouts are watched; `brain hook` covers any other checkout). Every update pulls immediately, and every repository
 is updated at least every 24 hours.
@@ -71,21 +75,22 @@ documents under **Documents** and connect your agents (`brain connect`). The ful
 | Command | Purpose |
 |---|---|
 | `brain serve` | start the server: UI, REST API, MCP, webhooks, both engines and the agents |
-| `brain doctor` | check Python, configuration, corporate API, code engine, LightRAG, packages, git and repositories |
+| `brain doctor` | check Python, configuration, corporate API, code engine, SQLite full-text search, packages, git and repositories |
 | `brain sync [REPO]` | update and re-index one repository, or all of them |
 | `brain search "…" [--scope all\|code\|semantic\|docs] [--detail brief\|normal\|full] [--set S] [--branch B]` | search from a terminal |
 | `brain ask "…" [--set S] [--branch B]` | ask a question |
-| `brain enhance "…" [--set S] [--path .] [--repo R]` | enhance a prompt; `--path` adds branch-drift notes from a local checkout |
+| `brain enhance "…" [--set S] [--path .] [--repo R]` | enhance a prompt of any kind; `--path` adds branch-drift notes from a local checkout |
 | `brain guide ["focus"] [--set S] [--repo R]` | write a project guide for newcomers |
 | `brain hook [PATH] [--repo R] [--remove]` | in a checkout: every `git pull` of the tracked branch updates AI-BRAIN |
 | `brain drift [PATH] [--repo R] [--main main]` | compare the branch checked out in PATH with the indexed `main` |
+| `brain impact [files…] [--repo R] [--path .]` | what a change reaches and which tests to run; without files, the local branch's changed files (for CI) |
 | `brain connect [claude\|opencode\|pi\|all]` | print ready-to-paste agent configuration |
 | `brain version` | print the version |
 
 ## Requirements at a glance
 
 - Windows 10/11 or Windows Server 2019+ (x64), or Linux x86-64 with glibc 2.17+.
-- Python 3.13 and git. All Python packages are bundled in `wheels/`.
+- Python 3.13 and git. All Python packages are bundled in `wheels/` (41 wheels, about 80 MB).
 - 4 CPU cores, 8 GB RAM (16 GB for large monorepos), 10 GB disk plus three times the size of the source code.
 - An OpenAI-compatible chat model and embedding model reachable from the server; a vision model is optional.
 
@@ -99,6 +104,7 @@ documents under **Documents** and connect your agents (`brain connect`). The ful
 | [docs/03-CONFIGURATION.md](docs/03-CONFIGURATION.md) | every setting with default and meaning (generated from the code) |
 | [docs/04-REPOSITORIES-AND-SETS.md](docs/04-REPOSITORIES-AND-SETS.md) | repositories, git servers, credentials, sets, updates |
 | [docs/05-SEARCH-ASK-ENHANCE.md](docs/05-SEARCH-ASK-ENHANCE.md) | prompt analysis, the search pipeline, the agents and their tools |
+| [docs/20-REST-API-GUIDE.md](docs/20-REST-API-GUIDE.md) | using AI-BRAIN through its REST API: authentication, jobs, recipes |
 | [docs/06-API.md](docs/06-API.md) | REST API reference |
 | [docs/07-MCP-AND-AGENTS.md](docs/07-MCP-AND-AGENTS.md) | MCP tools and connecting Claude Code, opencode, pi and others |
 | [docs/08-PLUGINS.md](docs/08-PLUGINS.md) | replacing the code engine or the document engine |
@@ -111,6 +117,6 @@ documents under **Documents** and connect your agents (`brain connect`). The ful
 | [docs/15-TESTING.md](docs/15-TESTING.md) | static checks, end-to-end test, mock gateway, test record |
 | [docs/16-CODEBASE.md](docs/16-CODEBASE.md) | every file and module with its important facts |
 | [docs/17-REQUIREMENTS-WRITER.md](docs/17-REQUIREMENTS-WRITER.md) | the requirements writer and its formats |
-| [docs/18-ENGINE-COMPARISON.md](docs/18-ENGINE-COMPARISON.md) | codebase-memory-mcp compared with graphify and other engines |
+| [docs/18-ENGINE-COMPARISON.md](docs/18-ENGINE-COMPARISON.md) | the code engine and the document engine compared with open-source alternatives |
 | [docs/19-REVIEW.md](docs/19-REVIEW.md) | review of the whole system, known limits and rating |
-| [docs/decisions/](docs/decisions/README.md) | architecture decision records ADR-001 to ADR-027 |
+| [docs/decisions/](docs/decisions/README.md) | architecture decision records ADR-001 to ADR-028 |

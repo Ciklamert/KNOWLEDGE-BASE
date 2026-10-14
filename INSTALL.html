@@ -68,8 +68,8 @@ command can be copied as it is.</p>
 </table>
 
 <h2 id="bundle">2. Nothing to download</h2>
-<p>The folder contains <b>every Python package</b> for Python 3.13 on Windows and Linux (<code>wheels/</code>, about 225 MB),
-the code engine for both systems (<code>bin/</code>), the tokenizer files LightRAG needs (<code>vendor/</code>) and the UI's graph
+<p>The folder contains <b>every Python package</b> for Python 3.13 on Windows and Linux (<code>wheels/</code>, about 80 MB),
+the code engine for both systems (<code>bin/</code>) and the UI's graph
 library. Setup installs with <code>pip --no-index</code>, so <b>no internet access is needed</b> at any step.</p>
 
 <h2 id="copy">3. Copy the folder to the server</h2>
@@ -107,7 +107,7 @@ chmod +x setup.sh brain.sh
 <tr><td><code>BRAIN_UI_PASSWORD</code></td><td>a strong password</td><td>login for the UI (user <code>BRAIN_UI_USER</code>, default <code>admin</code>)</td></tr>
 <tr><td><code>BRAIN_LLM_BASE_URL</code></td><td><code>https://llm-gateway.corp.local/v1</code></td><td>the corporate OpenAI-compatible API</td></tr>
 <tr><td><code>BRAIN_LLM_API_KEY</code></td><td><code>sk-…</code></td><td>its key</td></tr>
-<tr><td><code>BRAIN_LLM_MODEL</code></td><td><code>qwen3-32b</code></td><td>default chat model for ask, enhance, the requirements writer and document extraction</td></tr>
+<tr><td><code>BRAIN_LLM_MODEL</code></td><td><code>qwen3-32b</code></td><td>default chat model for ask, enhance and the requirements writer (documents are indexed without it)</td></tr>
 <tr><td><code>BRAIN_EMBEDDING_MODEL</code></td><td><code>bge-m3</code></td><td>multilingual embedding model for documents, code vectors and re-ranking</td></tr>
 <tr><td><code>BRAIN_EMBEDDING_DIM</code></td><td><code>1024</code></td><td>its vector size (<code>brain doctor</code> prints the real one)</td></tr>
 </table>
@@ -115,7 +115,7 @@ chmod +x setup.sh brain.sh
 pictures and scanned pages), <code>BRAIN_CA_BUNDLE</code> (internal CA certificate of the API), <code>BRAIN_GITLAB_URL</code> +
 <code>BRAIN_GITLAB_TOKEN</code> and <code>BRAIN_TFS_URL</code> + <code>BRAIN_TFS_TOKEN</code> (the corporate git servers and read tokens;
 repositories can then be written as <code>gitlab:group/project</code> and <code>tfs:Project/repo</code>), <code>BRAIN_GIT_CA_BUNDLE</code>
-(internal CA of the git servers), <code>LIGHTRAG_SUMMARY_LANGUAGE=Turkish</code> (language of the entity descriptions). Every
+(internal CA of the git servers). Every
 setting with its meaning: <code>docs/03-CONFIGURATION.md</code>.</p>
 
 <h2 id="doctor">6. Check</h2>
@@ -145,16 +145,21 @@ progress, and any error with its log.</p>
 <code>tfs:Project/repo</code> or a full URL; the server clones it and follows the branch) or a local <b>path</b> on the server; the
 <b>branch</b> to follow (default <code>main</code>); an <b>own token</b> only if this repository needs other credentials than its server.</li>
 <li><i>Repository sets</i>: <b>Add set</b>, name it (for example <code>payments</code>) and tick its repositories.</li>
-<li><b>Save repositories and sets</b>, then <b>Update all now</b>. Progress appears on Overview and Repositories; the first
+<li><b>Save repositories and sets</b>: every new repository is indexed at once on its branch (changing a repository's branch re-indexes it). Progress appears on Overview and Repositories; the first
 index of 10,000 files takes a few minutes, later updates take seconds.</li>
 </ol>
 <p>Or edit <code>repos.json</code> directly (see <code>repos.example.json</code>). Search, Ask, Enhance and Requirements can then target one
 repository or a whole set.</p>
 
 <h2 id="docs">9. Add documents</h2>
-<p>UI → <b>Documents</b> → drop files (PDF, Word, PowerPoint, Excel, HTML, CSV, Markdown, text, source code, images) or add a
-note. Every document is converted to Markdown first (<b>Markdown</b> shows the result). Status moves
-<i>pending → processing → processed</i>; failures show their reason. <b>Remove</b> deletes a document.</p>
+<p>UI → <b>Documents</b> → drop files (PDF with tables and pictures, Word, PowerPoint, Excel, HTML, CSV, JSON, XML, e-mails,
+zip archives, EPUB, notebooks, Markdown, text, source code, images) or add a note. Every document is converted to
+Markdown first (<b>Markdown</b> shows the result), split into passages along its headings and pages, and is searchable
+as soon as the upload returns; no model call is needed for that. The <b>Vectors</b> and <b>Pictures</b> columns fill up
+in the background (one batched embedding pass, one vision call per picture). <b>Remove</b> deletes a document;
+<b>Re-index all</b> rebuilds every document from <code>data/originals/</code>.</p>
+<p>Requirements: open <b>Requirements → Formats</b> and add your organisation's format (type it, or load a Word or PDF
+template). No format is built in; the writer refuses to write until one exists.</p>
 
 <h2 id="hooks">10. Connect the webhooks</h2>
 <p>Each repository on the <b>Repositories</b> page shows its own webhook with <b>Copy URL</b>, <b>Copy secret</b> and the setup steps.</p>
@@ -220,13 +225,13 @@ sudo firewall-cmd --add-port=8765/tcp --permanent &amp;&amp; sudo firewall-cmd -
 <h2 id="trouble">14. Troubleshooting</h2>
 <table>
 <tr><th>Symptom</th><th>What to do</th></tr>
-<tr><td>Overview: document graph <i>error</i></td><td>read the log tail on the card; usual causes: wrong model or key, wrong embedding size, port <code>LIGHTRAG_PORT</code> in use</td></tr>
-<tr><td>Documents end as <i>failed</i></td><td>read the error in the table; "VLM … not available" → fix or clear <code>BRAIN_VLM_MODEL</code>; timeouts → raise <code>LIGHTRAG_LLM_TIMEOUT</code> (or <code>LIGHTRAG_EMBEDDING_TIMEOUT</code>), lower <code>LIGHTRAG_MAX_ASYNC</code></td></tr>
+<tr><td>Overview: document graph <i>error</i></td><td>the data folder is not writable, or SQLite has no full-text search (<code>brain doctor</code> checks both)</td></tr>
+<tr><td>Vectors or picture descriptions stay incomplete on the Documents page</td><td>the embedding or vision model failed; fix the URL, key or <code>BRAIN_VLM_MODEL</code>: the next upload or start completes them; keyword search works meanwhile</td></tr>
 <tr><td>Repository sync fails</td><td>the job error on Overview; check <code>BRAIN_GITLAB_URL</code> / <code>BRAIN_TFS_URL</code> and their tokens (or <code>BRAIN_GIT_TOKEN</code>, or the repository's own token); TLS: <code>BRAIN_GIT_CA_BUNDLE</code></td></tr>
 <tr><td>Webhook answers 401, 404 or 503</td><td>401: copy the secret again; 404: wrong repository name in the URL; 503: save the repository first</td></tr>
 <tr><td>Ask or enhance notes "tool calling not supported"</td><td>a harmless automatic fallback; or set <code>BRAIN_AGENT_TOOL_CALLING=off</code></td></tr>
 <tr><td>Colleagues cannot open the UI</td><td>a firewall rule for the port; <code>BRAIN_HOST=0.0.0.0</code></td></tr>
-<tr><td>Logs</td><td>UI → Logs, or <code>data/logs/server.log</code>, <code>lightrag.log</code>, <code>codebase-memory.log</code></td></tr>
+<tr><td>Logs</td><td>UI → Logs, or <code>data/logs/server.log</code>, <code>codebase-memory.log</code></td></tr>
 </table>
 <p>More: <code>docs/13-OPERATIONS.md</code>, <code>docs/09-WEBHOOKS.md</code>, <code>docs/10-BRANCH-DRIFT.md</code>.</p>
 
@@ -235,8 +240,8 @@ sudo firewall-cmd --add-port=8765/tcp --permanent &amp;&amp; sudo firewall-cmd -
 <li><code>brain doctor</code> shows only PASS and WARN</li>
 <li>Overview: all four cards (Code graph, Document graph, Corporate API, Agents) are <i>ready</i></li>
 <li>Repositories: every repository indexed, with a commit and code vectors</li>
-<li>Documents: a test document is <i>processed</i>; Search finds code and documents with all source chips filled</li>
-<li>Ask answers a question with sources; Enhance produces a prompt; Requirements writes a specification</li>
+<li>Documents: a test document shows its passages and full vectors; Search finds code and documents with all source chips filled</li>
+<li>Ask answers a question with sources; Enhance produces a prompt for a bug fix and for a new feature; Requirements writes software requirements in your format from pasted system requirements</li>
 <li>Each repository's webhook test answers 200 or 202; a merge into the tracked branch shows up in Search</li>
 <li>An agent lists the <code>brain</code> MCP tools</li>
 <li>Autostart and firewall configured; <code>data/</code>, <code>.env</code> and <code>repos.json</code> included in backups</li>

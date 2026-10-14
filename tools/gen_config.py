@@ -28,7 +28,7 @@ def env_example() -> str:
              "#  AI-BRAIN configuration. Copy to .env (setup does this) and fill in the REQUIRED values.",
              "#  Every value can also be changed later in the web UI (Settings), which edits this same file.",
              "#  Generated from brain/settings.py by tools/gen_config.py - all settings are listed here.",
-             "#  Raw engine variables: LIGHTRAG__<NAME>=value -> LightRAG, CBM__<NAME>=value -> code engine.",
+             "#  Raw code-engine variables: CBM__<NAME>=value is passed to codebase-memory-mcp as <NAME>=value.",
              "# =========================================================================================="]
     for group, items in groups().items():
         lines += ["", f"# ---- {group} " + "-" * (86 - len(group))]
@@ -54,9 +54,9 @@ def config_md() -> str:
            "**Restart column:** *live* = applied on the next request; *docs*/*code* = that engine restarts "
            "automatically when you save in the UI (from the CLI: restart the server); *server* = restart "
            "`brain serve` yourself.", "",
-           "**Pass-through:** any `LIGHTRAG__NAME=value` line is passed to LightRAG as `NAME=value` (e.g. "
-           "`LIGHTRAG__ENTITY_TYPES`, `LIGHTRAG__MAX_GLEANING`); any `CBM__NAME=value` is passed to "
-           "codebase-memory-mcp. So every engine variable is adjustable without code changes.", ""]
+           "**Pass-through:** any `CBM__NAME=value` line is passed to codebase-memory-mcp as `NAME=value`, so every "
+           "code-engine variable is adjustable without code changes. The document engine is part of this server; "
+           "its settings are in the Document graph group.", ""]
     for group, items in groups().items():
         out += [f"## {group}", "", "| Key | Default | Restart | Meaning |", "|---|---|---|---|"]
         for s in items:

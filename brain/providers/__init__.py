@@ -2,7 +2,7 @@
 the document-graph engine can be swapped by changing BRAIN_CODE_PROVIDER / BRAIN_DOC_PROVIDER:
 
     BRAIN_CODE_PROVIDER=codebase_memory          -> brain/providers/codebase_memory.py : Provider
-    BRAIN_DOC_PROVIDER=lightrag                  -> brain/providers/lightrag.py        : Provider
+    BRAIN_DOC_PROVIDER=docgraph                  -> brain/providers/docgraph.py        : Provider
     BRAIN_DOC_PROVIDER=mycompany.brain_ext:MyDocs   -> any importable class implementing DocGraph
 
 A new provider implements the abstract methods below; everything optional has a safe default.
@@ -104,8 +104,13 @@ class CodeGraph(Engine):
         """Declarations of one file with line ranges (read it before reading lines)."""
         raise ValueError("file outlines are not supported by this code provider")
 
+    def impact(self, project: str, files: list[str] | None = None, symbols: list[str] | None = None,
+               depth: int = 3) -> dict:
+        """What a change reaches: {changed, affected, entry_points, tests} (see codebase_memory.impact)."""
+        raise ValueError("impact analysis is not supported by this code provider")
+
     def tool(self, name: str, args: dict) -> str:
-        """Engine-specific deep tools: trace, snippet, architecture (overview), query_graph, file_outline."""
+        """Engine-specific deep tools: trace (call chains) and architecture (the overview tool)."""
         raise ValueError(f"tool {name} is not supported by this code provider")
 
     def graph(self, project: str, limit: int = 1200) -> dict:

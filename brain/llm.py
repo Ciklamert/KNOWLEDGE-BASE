@@ -1,6 +1,5 @@
 """Minimal client for the corporate OpenAI-compatible API: /chat/completions (with optional tool calling)
-and /embeddings. It is the only code in this server that leaves the machine (LightRAG has its own client
-configured from the same settings)."""
+and /embeddings. It is the only code in this server that talks to the AI service."""
 from __future__ import annotations
 
 import threading

@@ -13,6 +13,16 @@ from collections import OrderedDict
 from typing import Callable
 
 _ids = itertools.count(1)
+_version = [0]   # increases on every change people should see; the UI listens to it at /api/events
+
+
+def tick() -> None:
+    """Something visible changed (a job step, a document, a repository, a setting)."""
+    _version[0] += 1
+
+
+def version() -> int:
+    return _version[0]
 _lock = threading.Lock()
 JOBS: "OrderedDict[int, Job]" = OrderedDict()
 KEEP = 200
@@ -27,6 +37,7 @@ class Job:
         self.started, self.finished = time.time(), None
 
     def log(self, step: str, progress: float | None = None) -> None:
+        tick()
         self.step = step
         if progress is not None:
             self.progress = max(0.0, min(1.0, progress))
@@ -45,6 +56,7 @@ class Job:
 def start(kind: str, title: str, fn: Callable[[Job], object], background: bool = True) -> Job:
     """Run fn(job) and record its outcome. background=False runs inline and re-raises errors."""
     job = Job(kind, title)
+    tick()
     with _lock:
         JOBS[job.id] = job
         while len(JOBS) > KEEP:
@@ -61,6 +73,7 @@ def start(kind: str, title: str, fn: Callable[[Job], object], background: bool =
                 raise
         finally:
             job.finished = time.time()
+            tick()
     if background:
         threading.Thread(target=run, daemon=True, name=f"job-{job.id}").start()
     else:

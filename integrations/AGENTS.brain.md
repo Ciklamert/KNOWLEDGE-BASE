@@ -13,7 +13,9 @@ decisions). Use it instead of grep, glob and reading whole files; it costs fewer
 | glob | `files` |
 | exploring an unknown repository | `overview` |
 | searching by idea, or in Turkish | `search` (`detail=brief` to scan; `scope=docs` for business rules) |
-| planning a change | `enhance_prompt` |
+| planning a bug fix, a new feature or any change | `enhance_prompt` |
+| what a change breaks, which tests to run | `impact` (files or symbols) |
+| what earlier sessions decided or learned | `recall` at the start; `remember` what the next session needs |
 
 When the current branch is not `main`: run `git rev-parse --abbrev-ref HEAD`, `git merge-base HEAD origin/main`,
 `git diff --name-only origin/main...HEAD` and `git status --porcelain`, call `check_branch` with the results and follow

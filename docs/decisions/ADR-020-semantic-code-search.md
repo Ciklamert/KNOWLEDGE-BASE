@@ -27,6 +27,6 @@ compared ([18-ENGINE-COMPARISON.md](../18-ENGINE-COMPARISON.md)):
 
 ## Consequences
 A Turkish question ("müşteriye iade nasıl yapılır") reaches `refund_payment`. The first sync costs one embedding pass
-over all symbols (batched and parallel: `BRAIN_CODE_VECTORS_BATCH`, `BRAIN_CODE_VECTORS_PARALLEL`); later syncs embed
+over all symbols (batched and parallel: `BRAIN_EMBED_BATCH`, `BRAIN_EMBED_PARALLEL`); later syncs embed
 only changed symbols. `BRAIN_CODE_VECTORS=local` turns the multilingual index off (no API cost, and no code text sent to
 the API).

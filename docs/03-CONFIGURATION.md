@@ -12,7 +12,7 @@ Repositories and repository sets live in `repos.json` (another file: `BRAIN_REPO
 
 **Restart column:** *live* = applied on the next request; *docs*/*code* = that engine restarts automatically when you save in the UI (from the CLI: restart the server); *server* = restart `brain serve` yourself.
 
-**Pass-through:** any `LIGHTRAG__NAME=value` line is passed to LightRAG as `NAME=value` (e.g. `LIGHTRAG__ENTITY_TYPES`, `LIGHTRAG__MAX_GLEANING`); any `CBM__NAME=value` is passed to codebase-memory-mcp. So every engine variable is adjustable without code changes.
+**Pass-through:** any `CBM__NAME=value` line is passed to codebase-memory-mcp as `NAME=value`, so every code-engine variable is adjustable without code changes. The document engine is part of this server; its settings are in the Document graph group.
 
 ## Server
 
@@ -35,17 +35,19 @@ Repositories and repository sets live in `repos.json` (another file: `BRAIN_REPO
 
 | Key | Default | Restart | Meaning |
 |---|---|---|---|
-| `BRAIN_LLM_BASE_URL` | (empty) | docs | **required** OpenAI-compatible base URL, ending in /v1. |
-| `BRAIN_LLM_API_KEY` | (empty) | docs | **required** API key for the base URL. Secret: never shown by the UI. |
-| `BRAIN_LLM_MODEL` | (empty) | docs | **required** Default chat model (used by every role that has no own model). |
-| `BRAIN_EMBEDDING_MODEL` | (empty) | docs | **required** Embedding model (multilingual, e.g. bge-m3): documents, the multilingual code vectors and re-ranking. |
-| `BRAIN_EMBEDDING_DIM` | `1024` | docs | **required** Embedding vector size. Changing it (or the model) requires re-ingesting documents; code vectors rebuild by themselves. |
-| `BRAIN_EMBEDDING_BASE_URL` | (empty) | docs | Only if embeddings live on a different URL. |
-| `BRAIN_EMBEDDING_API_KEY` | (empty) | docs | Only if embeddings need a different key. Secret: never shown by the UI. |
-| `BRAIN_VLM_MODEL` | (empty) | docs | Vision model for images and scanned pages in documents (optional). |
-| `BRAIN_CA_BUNDLE` | (empty) | docs | Corporate CA certificate (PEM) for TLS interception. |
-| `BRAIN_VERIFY_TLS` | `true` | docs | Verify TLS certificates of the corporate API. |
+| `BRAIN_LLM_BASE_URL` | (empty) | live | **required** OpenAI-compatible base URL, ending in /v1. |
+| `BRAIN_LLM_API_KEY` | (empty) | live | **required** API key for the base URL. Secret: never shown by the UI. |
+| `BRAIN_LLM_MODEL` | (empty) | live | **required** Default chat model (used by every role that has no own model). |
+| `BRAIN_EMBEDDING_MODEL` | (empty) | docs | **required** Embedding model (multilingual, e.g. bge-m3): document passages, the multilingual code vectors and re-ranking. |
+| `BRAIN_EMBEDDING_DIM` | `1024` | live | **required** Embedding vector size. Changing it (or the model) requires re-ingesting documents; code vectors rebuild by themselves. |
+| `BRAIN_EMBEDDING_BASE_URL` | (empty) | live | Only if embeddings live on a different URL. |
+| `BRAIN_EMBEDDING_API_KEY` | (empty) | live | Only if embeddings need a different key. Secret: never shown by the UI. |
+| `BRAIN_VLM_MODEL` | (empty) | live | Vision model (optional): describes pictures, charts and scanned pages in documents, one call per picture, after the text is already searchable. |
+| `BRAIN_CA_BUNDLE` | (empty) | live | Corporate CA certificate (PEM) for TLS interception. |
+| `BRAIN_VERIFY_TLS` | `true` | live | Verify TLS certificates of the corporate API. |
 | `BRAIN_LLM_TIMEOUT` | `120` | live | Default seconds for one chat/embedding HTTP call. |
+| `BRAIN_EMBED_BATCH` | `64` | live | Texts per embedding request (document passages, code symbols). |
+| `BRAIN_EMBED_PARALLEL` | `4` | live | Parallel embedding requests while indexing. |
 | `BRAIN_AGENT_TOOL_CALLING` | `auto` | live | auto = use native tool calling, fall back if the gateway rejects it; native; off = one-shot with context. One of: `auto`, `native`, `off`. |
 
 ## Relevance
@@ -54,7 +56,7 @@ Repositories and repository sets live in `repos.json` (another file: `BRAIN_REPO
 |---|---|---|---|
 | `BRAIN_QUERY_MAX_TERMS` | `12` | live | How many key terms are extracted from a prompt (most important first). |
 | `BRAIN_STOPWORDS_EXTRA` | (empty) | live | Extra stop-words to ignore, comma separated (company jargon, e.g. proje, ekip, ticket). Built-in: English + Turkish. |
-| `BRAIN_RERANK` | `true` | live | Re-rank code and document results by meaning with the corporate embedding model (multilingual). |
+| `BRAIN_RERANK` | `true` | live | Re-rank code candidates by meaning, using the code vectors stored at indexing (no extra API call). |
 | `BRAIN_RERANK_CANDIDATES` | `30` | live | How many code candidates are re-ranked (more = better recall, slower). |
 | `BRAIN_RERANK_WEIGHT` | `0.6` | live | Share of meaning vs. lexical rank in the final order (0-1). |
 | `BRAIN_DOC_BRIDGE` | `true` | live | Use the domain entities found in documents as extra code-search terms (business words -> code). |
@@ -70,6 +72,7 @@ Repositories and repository sets live in `repos.json` (another file: `BRAIN_REPO
 | `BRAIN_SEARCH_TOP_K` | `8` | live | Code hits returned per search. |
 | `BRAIN_SEARCH_DOC_CHUNKS` | `6` | live | Document passages returned per search. |
 | `BRAIN_SEARCH_TIMEOUT` | `60` | live | Seconds before a search part (code or docs) is abandoned. |
+| `BRAIN_EMBED_BUDGET` | `3` | live | Seconds a search waits for the question's embedding (the only API call a search makes). Past it, the search answers from keywords, the graphs and concepts; the embedding is kept for the next search. |
 | `BRAIN_CONTEXT_MAX_CHARS` | `16000` | live | Size budget of rendered search context given to agents. |
 | `BRAIN_SEARCH_DETAIL` | `normal` | live | How much of each code hit search writes for AI agents, MCP and the CLI (less = fewer tokens): brief = location, signature, callers, callees and why it matched; normal = also the source of the 3 best hits; full = the source of every hit. A request can choose another level. One of: `brief`, `normal`, `full`. |
 | `BRAIN_TOOL_MAX_TOKENS` | `2500` | live | Approximate token limit of one code-tool answer for agents (trace, grep, overview); longer answers are cut and say how to get the rest. |
@@ -114,8 +117,6 @@ Repositories and repository sets live in `repos.json` (another file: `BRAIN_REPO
 | `CBM_INDEX_TIMEOUT` | `7200` | live | Seconds one repository index may take. |
 | `CBM_QUERY_TIMEOUT` | `120` | live | Seconds one code-graph query may take. |
 | `BRAIN_CODE_VECTORS` | `both` | live | Semantic code search: local = only the code engine's bundled code embeddings (offline, English-oriented); both = also a code vector index built with the corporate multilingual embedding model (Turkish questions find English code by meaning; costs one embedding pass per changed symbol after each sync). One of: `local`, `both`. |
-| `BRAIN_CODE_VECTORS_BATCH` | `64` | live | Symbols per embedding request when building the corporate code vectors. |
-| `BRAIN_CODE_VECTORS_PARALLEL` | `4` | live | Parallel embedding requests when building the corporate code vectors. |
 | `BRAIN_CODE_VECTORS_MAX` | `200000` | live | Largest number of symbols embedded per repository. |
 
 ## Updates & webhooks
@@ -162,19 +163,7 @@ Repositories and repository sets live in `repos.json` (another file: `BRAIN_REPO
 
 | Key | Default | Restart | Meaning |
 |---|---|---|---|
-| `BRAIN_DOC_PROVIDER` | `lightrag` | docs | Document graph plug-in: a name in brain/providers or 'package.module:Class'. |
-| `LIGHTRAG_PORT` | `9631` | docs | Internal LightRAG port (127.0.0.1 only). |
-| `LIGHTRAG_LLM_MODEL` | (empty) | docs | Chat model for entity extraction (empty = BRAIN_LLM_MODEL). |
-| `LIGHTRAG_LLM_TIMEOUT` | `240` | docs | LightRAG LLM_TIMEOUT: seconds for one chat call during entity/relation extraction and summaries. |
-| `LIGHTRAG_EMBEDDING_TIMEOUT` | `60` | docs | LightRAG EMBEDDING_TIMEOUT: seconds for one embedding call. |
-| `LIGHTRAG_TIMEOUT` | `300` | docs | LightRAG TIMEOUT: seconds the LightRAG server allows for one HTTP request. |
-| `LIGHTRAG_STARTUP_TIMEOUT` | `180` | live | Seconds to wait for LightRAG to become healthy. |
-| `LIGHTRAG_REQUEST_TIMEOUT` | `600` | live | Seconds for one request from this server to LightRAG. |
-| `LIGHTRAG_MAX_ASYNC` | `4` | docs | Concurrent LLM calls during ingestion. |
-| `LIGHTRAG_MAX_PARALLEL_INSERT` | `2` | docs | Documents processed in parallel. |
-| `LIGHTRAG_SUMMARY_LANGUAGE` | `English` | docs | Language of extracted entity descriptions (English, Turkish ...). |
-| `LIGHTRAG_CHUNK_SIZE` | `1200` | docs | Tokens per chunk. |
-| `LIGHTRAG_CHUNK_OVERLAP` | `100` | docs | Token overlap between chunks. |
-| `LIGHTRAG_QUERY_MODE` | `mix` | live | Retrieval mode: mix (graph+vectors), hybrid, local, global, naive. One of: `mix`, `hybrid`, `local`, `global`, `naive`. |
-| `LIGHTRAG_TOP_K` | `20` | live | Entities/relations retrieved per query. |
-| `LIGHTRAG_PARSER` | (empty) | docs | Override LightRAG's parser routing (empty = automatic). |
+| `BRAIN_DOC_PROVIDER` | `docgraph` | docs | Document graph plug-in: a name in brain/providers or 'package.module:Class'. |
+| `BRAIN_DOC_CHUNK_CHARS` | `1500` | live | Largest passage in characters; documents are split along their headings, tables by rows. Applies to documents indexed afterwards (Documents > Re-index all applies it to every document). |
+| `BRAIN_CONCEPT_SIM` | `0.82` | live | Meaning similarity (0-1) at which two document concepts count as the same thing (synonyms, Turkish/English translations) and at which a question reaches a concept by meaning. Check aliases on the Document graph page; raise it if unrelated concepts are joined. |
+| `BRAIN_CONCEPT_CODE_SIM` | `0.5` | live | Meaning similarity (0-1) at which search links a document concept to the code that implements it, through the stored multilingual code vectors (no API call). |

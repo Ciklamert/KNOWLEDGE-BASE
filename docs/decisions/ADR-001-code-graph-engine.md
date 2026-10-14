@@ -24,7 +24,7 @@ How AI-BRAIN uses it:
 | a custom tree-sitter indexer in Python | slow at scale, few grammars, one corporate-API embedding call per symbol |
 | GitNexus | needs a Node runtime and LadybugDB; heavier to run air-gapped on Windows |
 | CodeGraphContext, code-graph-rag | need an external graph database (Neo4j, Kuzu, Memgraph); fewer languages |
-| LightRAG for code | one or two model calls per chunk, and a semantic rather than structural graph |
+| an LLM-extracted knowledge graph (LightRAG, GraphRAG) | one or two model calls per chunk, and a semantic rather than structural graph |
 | Sourcegraph / Zoekt | search only, no call graph; a server farm |
 | graphify | no vector search, 37 languages ([18](../18-ENGINE-COMPARISON.md)) |
 

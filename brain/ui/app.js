@@ -38,11 +38,17 @@ function md(src) {
   const blocks = String(src || "").split(/```/)
   return blocks.map((b, i) => {
     if (i % 2) { const nl = b.indexOf("\n"); return `<pre><code>${esc(nl >= 0 ? b.slice(nl + 1) : b)}</code></pre>` }
-    let html = "", list = null
+    let html = "", list = null, table = null
     const inline = (t) => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/\*([^*\s][^*]*)\*/g, "<i>$1</i>")
-    const close = () => { if (list) { html += `</${list}>`; list = null } }
+      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    const cells = (l) => l.replace(/^\||\|$/g, "").split(/(?<!\\)\|/).map((c) => inline(c.trim().replace(/\\\|/g, "|")))
+    const closeTable = () => { if (table) { html += `<table class="tbl">${table.map((r, i) => `<tr>${r.map((c) => i ? `<td>${c}</td>` : `<th>${c}</th>`).join("")}</tr>`).join("")}</table>`; table = null } }
+    const close = () => { closeTable(); if (list) { html += `</${list}>`; list = null } }
     for (const line of b.split("\n")) {
       let m
+      if (/^<!--.*-->$/.test(line.trim())) continue   // page markers and notes
+      if (line.startsWith("|")) { if (list) { html += `</${list}>`; list = null } if (!/^\|[-:| ]+\|$/.test(line)) (table ||= []).push(cells(line)); continue }
+      closeTable()
       if ((m = line.match(/^(#{1,4})\s+(.*)/))) { close(); const n = Math.min(4, m[1].length + 1); html += `<h${n}>${inline(m[2])}</h${n}>` }
       else if ((m = line.match(/^\s*[-*]\s+(.*)/))) { if (list !== "ul") { close(); html += "<ul>"; list = "ul" } html += `<li>${inline(m[1])}</li>` }
       else if ((m = line.match(/^\s*\d+[.)]\s+(.*)/))) { if (list !== "ol") { close(); html += "<ol>"; list = "ol" } html += `<li>${inline(m[1])}</li>` }
@@ -188,7 +194,7 @@ function liveAnalysis(input, out) {
 /* ---------------------------------------------------------- results (shared by search and the evidence panels) */
 function sourceChips(src) {
   const labels = { "code graph": "Code graph", "code vectors": "Code vectors", "document passages": "Document passages",
-    "document entities": "Entities", "document facts": "Facts", "code relations": "Code relations" }
+    "document entities": "Concepts", "document facts": "Facts", "document rules": "Rules", "code relations": "Code relations" }
   return Object.entries(src || {}).map(([k, v]) => `<span class="chip src ${v ? "" : "zero"}" title="${esc(k)}">${esc(labels[k] || k)} <b>${v}</b></span>`).join("")
 }
 function codeHit(h, i) {
@@ -207,7 +213,7 @@ function codeHit(h, i) {
 }
 function renderResults(el, r) {
   const d = r.docs || {}
-  const code = r.code || [], chunks = d.chunks || [], ents = d.entities || [], facts = d.relations || []
+  const code = r.code || [], chunks = d.chunks || [], ents = d.entities || [], facts = d.relations || [], rules = d.rules || []
   el.innerHTML = `<div class="src-row">${sourceChips(r.sources)}${(r.projects || []).length ? `<span class="muted">repositories: ${r.projects.map(esc).join(", ")}</span>` : ""}</div>
   <div class="results">
     <section class="col"><h2 class="sub">Code <span class="muted">(code graph + code vectors)</span></h2>
@@ -216,8 +222,11 @@ function renderResults(el, r) {
     </section>
     <section class="col"><h2 class="sub">Documents <span class="muted">(document graph)</span></h2>
       ${chunks.map((c) => `<div class="hit"><div class="h"><b>${esc(c.source)}</b>${c.similarity != null ? `<span class="tag">sim ${c.similarity}</span>` : ""}<span class="spacer"></span>
-        <button class="ghost small" data-md="${esc(c.source)}">Markdown</button></div><blockquote>${esc(c.content.slice(0, 1500))}</blockquote></div>`).join("") || `<p class="muted">No document passages.</p>`}
-      ${ents.length ? `<h3>Entities</h3><div class="hit">${ents.slice(0, 15).map((e) => `<div><span class="tag">${esc(e.type)}</span><b>${esc(e.name)}</b> <span class="muted">${esc((e.description || "").slice(0, 260))}</span></div>`).join("")}</div>` : ""}
+        <button class="ghost small" data-md="${esc(c.doc || c.source)}">Markdown</button></div>
+        ${(c.matched || []).length ? `<div class="why-row">${c.matched.map((m) => `<span class="chip why">${esc(m)}</span>`).join("")}</div>` : ""}
+        <div class="md passage">${md(c.content.slice(0, 3000))}</div></div>`).join("") || `<p class="muted">No document passages.</p>`}
+      ${rules.length ? `<h3>Business rules</h3><div class="hit">${rules.slice(0, 12).map((x) => `<div><span class="tag">${esc(x.modality)}</span>${esc(x.text.slice(0, 300))}${(x.limits || []).map((l) => ` <span class="chip why">${esc(l)}</span>`).join("")} <span class="muted">${esc(x.source)}</span></div>`).join("")}</div>` : ""}
+      ${ents.length ? `<h3>Concepts</h3><div class="hit">${ents.slice(0, 15).map((e) => `<div><span class="tag">${esc(e.type)}</span><b>${esc(e.name)}</b>${(e.aliases || []).length ? ` <span class="muted">also: ${e.aliases.map(esc).join(", ")}</span>` : ""} <span class="muted">${esc((e.description || "").slice(0, 260))}</span>${(e.implemented_by || []).length ? `<div class="muted">implemented by ${e.implemented_by.map((x) => `<code>${esc(x)}</code>`).join(" ")}</div>` : ""}</div>`).join("")}</div>` : ""}
       ${facts.length ? `<h3>Facts</h3><div class="hit">${facts.slice(0, 12).map((e) => `<div><b>${esc(e.a)}</b> → <b>${esc(e.b)}</b> <span class="muted">${esc((e.description || "").slice(0, 260))}</span></div>`).join("")}</div>` : ""}
     </section>
   </div>`
@@ -467,10 +476,18 @@ INIT.documents = () => {
   ;["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over") }))
   drop.addEventListener("drop", (e) => upload(e.dataTransfer.files))
   input.addEventListener("change", () => { upload(input.files); input.value = "" })
-  $("#note-add").onclick = async () => {
-    const text = $("#note-text").value.trim(); if (!text) return toast("Write something first")
-    try { await api("/api/docs/text", { method: "POST", json: { name: $("#note-name").value.trim() || "note.md", text } })
-      $("#note-text").value = ""; $("#note-name").value = ""; toast("Note added; processing…"); REFRESH.documents() } catch (err) { toast(err.message) }
+  $("#mem-add").onclick = async () => {
+    const title = $("#mem-title").value.trim(), text = $("#mem-text").value.trim()
+    if (!title || !text) return toast("Write a title and the text first")
+    const paths = $("#mem-paths").value.split(",").map((x) => x.trim()).filter(Boolean)
+    try {
+      const m = await api("/api/memory", { method: "POST", json: { type: $("#mem-type").value, title, text, repo: $("#mem-repo").value.trim() || null, paths, source: "UI" } })
+      $("#mem-title").value = $("#mem-text").value = $("#mem-paths").value = ""; toast(m.replaced ? "Memory replaced" : "Remembered and searchable"); REFRESH.documents()
+    } catch (err) { toast(err.message) }
+  }
+  $("#doc-reindex").onclick = async () => {
+    if (!confirm("Convert and index every document again?")) return
+    try { const { job } = await api("/api/docs/reindex", { method: "POST" }); await followJob(job, $("#pipe")); toast("All documents re-indexed") } catch (err) { toast(err.message) }
   }
 }
 async function upload(files) {
@@ -480,20 +497,30 @@ async function upload(files) {
     const { job } = await api("/api/docs/upload", { method: "POST", body: fd })
     const res = await followJob(job, $("#pipe"))
     const failed = res.filter((r) => r.status === "failure")
-    toast(failed.length ? `${failed.length} file(s) failed: ${failed[0].message}` : `${res.length} file(s) queued for processing`)
+    toast(failed.length ? `${failed.length} file(s) failed: ${failed[0].message}` : `${res.length} file(s) indexed and searchable`)
   } catch (err) { toast(err.message) }
   REFRESH.documents()
 }
-let docTimer
 REFRESH.documents = async () => {
-  clearTimeout(docTimer)
   try {
     const d = await api("/api/docs"), p = d.pipeline || {}
-    if (!$("#pipe .job.running")) $("#pipe").innerHTML = p.error ? `<div class="alert">${esc(p.error)}</div>` : p.busy ? `<div class="job running"><div class="t"><b>Processing documents</b>
-      <span class="muted">${esc(p.job || "")}</span></div><div class="s">${esc(p.message || "")}</div><div class="bar ${p.batches ? "" : "indet"}"><i style="width:${p.batches ? Math.round(100 * (p.batch || 0) / p.batches) : 0}%"></i></div></div>` : ""
-    $("#doc-rows").innerHTML = d.documents.map((x) => `<tr><td>${esc(x.name)}${x.error ? `<div class="muted">${esc(x.error).slice(0, 300)}</div>` : ""}</td>
-      <td><span class="st ${esc(x.status)}">${esc(x.status)}</span></td><td>${x.chunks ?? ""}</td><td>${ago(x.updated_at)}</td>
-      <td><button class="ghost small" data-md="${esc(x.name)}" title="The Markdown this document was converted to">Markdown</button> <button class="del" data-id="${esc(x.id)}" data-name="${esc(x.name)}">Remove</button></td></tr>`).join("") || `<tr><td colspan="5" class="muted">No documents yet.</td></tr>`
+    if (!$("#pipe .job.running")) $("#pipe").innerHTML = p.busy ? `<div class="job running"><div class="t"><b>Completing documents</b></div>
+      <div class="s">${esc(p.message || "")}</div><div class="bar indet"><i></i></div></div>` : ""
+    const mem = await api("/api/memory").catch(() => ({ memories: [] }))
+    $("#mem-count").textContent = mem.memories.length ? `(${mem.memories.length})` : ""
+    $("#mem-rows").innerHTML = mem.memories.map((m) => `<tr><td><span class="chip">${esc(m.type)}</span></td>
+      <td><b>${esc(m.title)}</b><div class="muted">${esc(m.text).slice(0, 400)}</div></td>
+      <td>${esc([m.repo, ...(m.paths || [])].filter(Boolean).join(", "))}${m.stale && m.stale.length ? `<div class="alert">stale: ${esc(m.stale.join(", "))} no longer exist</div>` : ""}</td>
+      <td>${ago(m.created)}</td><td><button class="del small" data-mem="${esc(m.name)}">✕</button></td></tr>`).join("") || `<tr><td colspan="5" class="muted">Nothing remembered yet.</td></tr>`
+    $$("#mem-rows [data-mem]").forEach((b) => (b.onclick = async () => {
+      if (!confirm("Forget this memory?")) return
+      try { await api(`/api/memory/${encodeURIComponent(b.dataset.mem)}`, { method: "DELETE" }); toast("Forgotten") } catch (err) { toast(err.message) }
+      REFRESH.documents()
+    }))
+    $("#doc-rows").innerHTML = d.documents.filter((x) => !x.name.startsWith("memory-")).map((x) => `<tr><td>${esc(x.name)}${x.error ? `<div class="muted">${esc(x.error).slice(0, 300)}</div>` : ""}</td>
+      <td><span class="st ${esc(x.status)}">${esc(x.status)}</span></td><td>${x.chunks ?? ""}</td><td>${x.rules ?? ""}</td><td>${x.vectors ?? ""} / ${x.chunks ?? ""}</td>
+      <td>${x.pictures ? `${x.described} / ${x.pictures}` : "-"}</td><td>${ago(x.updated_at)}</td>
+      <td><button class="ghost small" data-md="${esc(x.name)}" title="The Markdown this document was converted to">Markdown</button> <button class="del" data-id="${esc(x.id)}" data-name="${esc(x.name)}">Remove</button></td></tr>`).join("") || `<tr><td colspan="8" class="muted">No documents yet.</td></tr>`
     $$("#doc-rows [data-md]").forEach((b) => (b.onclick = async () => {
       try { const r = await api(`/api/docs/markdown?name=${encodeURIComponent(b.dataset.md)}`); viewer(b.dataset.md + " (as Markdown)", r.markdown) } catch (err) { toast(err.message) }
     }))
@@ -502,7 +529,6 @@ REFRESH.documents = async () => {
       try { await api(`/api/docs/${encodeURIComponent(b.dataset.id)}`, { method: "DELETE" }); toast("Removed") } catch (err) { toast(err.message) }
       REFRESH.documents()
     }))
-    if (p.busy || d.documents.some((x) => !["processed", "failed"].includes(x.status))) docTimer = setTimeout(() => $("#documents").classList.contains("on") && REFRESH.documents(), 3000)
   } catch (err) { $("#pipe").innerHTML = `<div class="alert">${esc(err.message)}</div>` }
 }
 
@@ -536,7 +562,10 @@ async function saveReposAndSets() {
     .filter((r) => r.name || r.url || r.path)
   const sets = {}
   $$("#set-edit .set-row").forEach((d) => { const n = $(".set-name", d).value.trim(); if (n) sets[n] = $$("input[type=checkbox]:checked", d).map((c) => c.value) })
-  try { await api("/api/repos", { method: "PUT", json: { repos: rows, sets } }); toast("Saved. Use 'Update' to index new repositories."); REFRESH.repos(true) } catch (err) { toast(err.message) }
+  try {
+    const r = await api("/api/repos", { method: "PUT", json: { repos: rows, sets } })
+    toast(r.indexing.length ? `Saved. Indexing ${r.indexing.join(", ")} now.` : "Saved."); REFRESH.repos(true)
+  } catch (err) { toast(err.message) }
 }
 INIT.repos = () => {
   $("#r-add").onclick = () => editRow()
@@ -627,37 +656,48 @@ INIT.settings = () => { $("#set-save").onclick = () => saveSettings("#set-groups
 /* ---------------------------------------------------------- requirements writer */
 let SRS_LAST = null
 async function loadTemplates() {
-  const r = await api("/api/srs/templates").catch(() => ({ templates: ["default"] }))
+  const r = await api("/api/srs/templates").catch(() => ({ templates: [] }))
   const sel = $("#q-template"), cur = sel.value
-  sel.innerHTML = r.templates.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("")
+  sel.innerHTML = r.templates.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("") || `<option value="">no format yet: add one under Formats</option>`
   if (cur && r.templates.includes(cur)) sel.value = cur
+  if (!r.templates.length) $("#q-tpl-box").open = true
 }
 async function loadTemplateInto(name) {
+  if (!name) return
   const r = await api(`/api/srs/templates/${encodeURIComponent(name)}`)
   $("#q-tpl-name").value = r.name; $("#q-tpl-text").value = r.text
 }
+async function fileToMarkdown(input) {   // any supported document -> Markdown (nothing is indexed)
+  const f = input.files[0]; input.value = ""
+  if (!f) return null
+  const fd = new FormData(); fd.append("file", f)
+  try { return await api("/api/convert", { method: "POST", body: fd }) } catch (err) { toast(err.message); return null }
+}
 INIT.srs = () => {
-  seg($("#q-mode"), (m) => {   // "something new" uses its own built-in format unless another one was chosen
-    const sel = $("#q-template"), want = m === "new" ? "new-feature" : "default"
-    if (["default", "new-feature"].includes(sel.value) && $(`option[value="${want}"]`, sel)) sel.value = want
-    $("#r-topic").placeholder = m === "new" ? "e.g. customers can pay invoices in instalments / taksitli ödeme" : "e.g. the whole billing system / refunds / müşteri iade süreci"
+  $("#q-topic-file").addEventListener("change", async (e) => {
+    const r = await fileToMarkdown(e.target); if (!r) return
+    $("#r-topic").value = r.markdown; $("#q-topic-info").textContent = `${r.name}: ${fmt(r.markdown.length)} characters`
   })
-  $("#q-tpl-box").addEventListener("toggle", () => { if ($("#q-tpl-box").open && !$("#q-tpl-text").value) loadTemplateInto($("#q-template").value || "default") })
+  $("#q-tpl-file").addEventListener("change", async (e) => {
+    const r = await fileToMarkdown(e.target); if (!r) return
+    $("#q-tpl-text").value = r.markdown; $("#q-tpl-name").value = r.name.replace(/\.[^.]+$/, ""); toast("Check the format, then Save format")
+  })
+  $("#q-tpl-box").addEventListener("toggle", () => { if ($("#q-tpl-box").open && !$("#q-tpl-text").value) loadTemplateInto($("#q-template").value) })
   $("#q-tpl-load").onclick = () => loadTemplateInto($("#q-template").value)
-  $("#q-tpl-new").onclick = async () => { await loadTemplateInto("default"); $("#q-tpl-name").value = "my-format" }
   $("#q-tpl-save").onclick = async () => {
     try { const r = await api(`/api/srs/templates/${encodeURIComponent($("#q-tpl-name").value.trim())}`, { method: "PUT", json: { text: $("#q-tpl-text").value } })
       toast(`Format "${r.saved}" saved`); await loadTemplates(); $("#q-template").value = r.saved } catch (err) { toast(err.message) }
   }
   $("#q-tpl-del").onclick = async () => {
     const n = $("#q-tpl-name").value.trim(); if (!n || !confirm(`Delete format "${n}"?`)) return
-    try { await api(`/api/srs/templates/${encodeURIComponent(n)}`, { method: "DELETE" }); toast("Deleted"); loadTemplates() } catch (err) { toast(err.message) }
+    try { await api(`/api/srs/templates/${encodeURIComponent(n)}`, { method: "DELETE" }); toast("Deleted"); $("#q-tpl-text").value = ""; loadTemplates() } catch (err) { toast(err.message) }
   }
   $("#q-go").onclick = async () => {
-    const topic = $("#r-topic").value.trim(); if (!topic) return toast("Describe what should be specified")
+    const topic = $("#r-topic").value.trim(); if (!topic) return toast("Write or load the request first")
+    if (!$("#q-template").value) return toast("Add your format first (Formats)")
     $("#q-go").disabled = true; $("#q-out").innerHTML = ""; $("#q-actions").hidden = true
     try {
-      const { job } = await api("/api/srs", { method: "POST", json: { topic, mode: segVal($("#q-mode")), target: $("#q-target").value, template: $("#q-template").value,
+      const { job } = await api("/api/srs", { method: "POST", json: { topic, target: $("#q-target").value, template: $("#q-template").value,
         language: $("#q-lang").value, model: $("#q-model").value || null, async: true } })
       SRS_LAST = await followJob(job, $("#q-progress"))
       showSrs(SRS_LAST.name, SRS_LAST.markdown, SRS_LAST.errors); evidencePanel($("#q-ev"), SRS_LAST); REFRESH.srs()
@@ -668,7 +708,7 @@ INIT.srs = () => {
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([SRS_LAST.markdown], { type: "text/markdown" }))
     a.download = `${SRS_LAST.name}.md`; a.click(); URL.revokeObjectURL(a.href) }
   $("#q-publish").onclick = async () => { if (!SRS_LAST) return
-    try { await api(`/api/srs/documents/${encodeURIComponent(SRS_LAST.name)}/publish`, { method: "POST" }); toast("Added to the document graph (processing)") } catch (err) { toast(err.message) } }
+    try { await api(`/api/srs/documents/${encodeURIComponent(SRS_LAST.name)}/publish`, { method: "POST" }); toast("Added to the document graph") } catch (err) { toast(err.message) } }
 }
 function showSrs(name, markdown, errors) {
   SRS_LAST = { name, markdown }
@@ -699,10 +739,27 @@ REFRESH.logs = async () => { const r = await api(`/api/logs/${segVal($("#log-pic
   const el = $("#log-out"); el.textContent = r.lines.join("\n") || "(empty)"; el.scrollTop = el.scrollHeight }
 
 /* ---------------------------------------------------------- boot */
+/* ---------------------------------------------------------- live updates (server-sent events) */
+const LIVE = ["overview", "documents", "repos", "srs", "logs"]   // pages that show state; the others keep what you typed
+function live() {
+  if (live.es) live.es.close()
+  let t
+  live.es = new EventSource("/api/events")
+  live.es.onmessage = () => { if (t) return; t = setTimeout(async () => {   // at most ~3 refreshes a second
+    t = null
+    if (document.hidden) return
+    await loadStatus()
+    const view = $(".view.on")?.id
+    if (LIVE.includes(view) && REFRESH[view]) REFRESH[view]()
+    if (["search", "ask", "enhance", "srs", "learn"].includes(view)) loadRepos()   // scope lists stay current
+  }, 300) }
+  live.es.onerror = () => { live.es.close(); setTimeout(live, 3000) }   // reconnect (server restart, network)
+}
+document.addEventListener("visibilitychange", () => !document.hidden && live.es && live.es.onmessage())
+
 async function boot() {
   try { await api("/api/me") } catch { return }
   showApp(); await loadRepos(); loadModels(); show(location.hash.slice(1) || "overview")
-  clearInterval(boot.t)
-  boot.t = setInterval(() => { if (document.hidden) return; loadStatus(); if ($("#overview").classList.contains("on")) REFRESH.overview() }, 4000)
+  live()
 }
 boot()

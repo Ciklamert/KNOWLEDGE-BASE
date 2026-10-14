@@ -1,4 +1,5 @@
 """Static checks: no server, no network.   python tests/test_static.py   (exit code = failures)"""
+import hashlib
 import importlib
 import os
 import re
@@ -34,7 +35,7 @@ def _raises(fn) -> bool:
 def main():
     check(f"python 3.13 ({sys.version.split()[0]})", sys.version_info[:2] == (3, 13))
     for mod in ("brain.settings", "brain.query", "brain.jobs", "brain.llm", "brain.auth", "brain.search", "brain.repos", "brain.drift", "brain.agents",
-                "brain.webhooks", "brain.mcp", "brain.server", "brain.codevec", "brain.srs", "brain.providers.codebase_memory", "brain.providers.lightrag",
+                "brain.webhooks", "brain.mcp", "brain.server", "brain.codevec", "brain.srs", "brain.providers.codebase_memory", "brain.providers.docgraph",
                 "brain.providers.convert"):
         try:
             importlib.import_module(mod)
@@ -45,7 +46,7 @@ def main():
     from brain import providers, search
     from brain import settings as cfg
     check("code provider loads via registry", providers.code().name == "codebase_memory")
-    check("doc provider loads via registry", providers.docs().name == "lightrag")
+    check("doc provider loads via registry", providers.docs().name == "docgraph")
 
     sys.path.insert(0, str(ROOT / "tools"))
     import gen_config
@@ -83,14 +84,10 @@ def main():
             check(f"rejects {key}={bad}", False)
         except ValueError:
             check(f"rejects {key}={bad}", True)
-    scopes = cfg.update({"BRAIN_SEARCH_TOP_K": "5", "LIGHTRAG__MAX_GLEANING": "0"})
-    check("update writes file and reports restarts", cfg.get("BRAIN_SEARCH_TOP_K") == 5 and "docs" in scopes, scopes)
-    check("pass-through variables", cfg.passthrough("LIGHTRAG__").get("MAX_GLEANING") == "0")
-    from brain.providers import lightrag as lr
-    cfg.update({"LIGHTRAG_LLM_TIMEOUT": "777", "LIGHTRAG_EMBEDDING_TIMEOUT": "55", "LIGHTRAG_TIMEOUT": "333"})
-    env = lr.Provider().child_env()
-    check("LightRAG timeouts from settings", (env["LLM_TIMEOUT"], env["EMBEDDING_TIMEOUT"], env["TIMEOUT"]) ==
-          ("777", "55", "333"), (env["LLM_TIMEOUT"], env["EMBEDDING_TIMEOUT"], env["TIMEOUT"]))
+    scopes = cfg.update({"BRAIN_SEARCH_TOP_K": "5", "CBM__SOME_OPTION": "0"})
+    check("update writes file and reports restarts", cfg.get("BRAIN_SEARCH_TOP_K") == 5 and "code" in scopes, scopes)
+    check("pass-through variables", cfg.passthrough("CBM__").get("SOME_OPTION") == "0")
+    check("unknown engine variables rejected", _raises(lambda: cfg.validate("OTHER__X", "1")))
 
     try:
         cfg.resolve_url("gitlab:a/b")
@@ -144,44 +141,43 @@ def main():
     d = Document(); d.add_heading("Ödeme Kuralları", 1); d.add_paragraph("Banka 503 döndüğünde üç kez denenir.")
     t = d.add_table(rows=2, cols=2); t.cell(0, 0).text = "Kod"; t.cell(1, 0).text = "503"
     buf = _io.BytesIO(); d.save(buf)
-    name, payload, mdtext = convert.to_markdown("kurallar.docx", buf.getvalue())
-    check("Word -> Markdown (heading, text, table)", name == "kurallar.docx.md" and "## Ödeme Kuralları" in mdtext
-          and "<table>" in mdtext, mdtext[:120])
-    name, _, mdtext = convert.to_markdown("p.html", b"<h2>Title</h2><p>Body <code>x()</code></p><script>bad()</script>")
+    mdtext = convert.convert("kurallar.docx", buf.getvalue()).text
+    check("Word -> Markdown (heading, text, table)", "## Ödeme Kuralları" in mdtext and "| Kod |" in mdtext, mdtext[:160])
+    mdtext = convert.convert("p.html", b"<h2>Title</h2><p>Body <code>x()</code></p><script>bad()</script>").text
     check("HTML -> Markdown", "## Title" in mdtext and "`x()`" in mdtext and "bad()" not in mdtext, mdtext)
-    check("CSV -> table", "<table>" in convert.to_markdown("t.csv", b"a,b\n1,2\n")[2])
-    check("code -> fenced block", "```python" in convert.to_markdown("x.py", b"def f(): pass")[2])
+    check("CSV -> Markdown table", "| a | b |\n|---|---|\n| 1 | 2 |" in convert.convert("t.csv", b"a,b\n1,2\n").text)
+    check("code -> fenced block", "```python" in convert.convert("x.py", b"def f(): pass").text)
     try:
-        convert.to_markdown("x.bin", b"\x00\x01\x02")
+        convert.convert("x.bin", b"\x00\x01\x02")
         check("binary rejected", False)
     except ValueError:
         check("binary rejected", True)
     # MarkItDown-style registry: content sniffing, containers and more formats
-    name, _, mdtext = convert.to_markdown("no-extension", buf.getvalue())
+    mdtext = convert.convert("no-extension", buf.getvalue()).text
     check("Word file without extension recognised by content", "## Ödeme Kuralları" in mdtext, mdtext[:80])
-    name, _, mdtext = convert.to_markdown("wrong.pdf", buf.getvalue())
+    mdtext = convert.convert("wrong.pdf", buf.getvalue()).text
     check("wrong extension falls back to the content's converter", "## Ödeme Kuralları" in mdtext, mdtext[:80])
     nb = {"nbformat": 4, "metadata": {"kernelspec": {"language": "python"}}, "cells": [
         {"cell_type": "markdown", "source": ["# Analiz"]},
         {"cell_type": "code", "source": ["print(1)"], "outputs": [{"output_type": "stream", "text": ["1\n"]}]}]}
-    mdtext = convert.to_markdown("a.ipynb", _json.dumps(nb).encode())[2]
+    mdtext = convert.convert("a.ipynb", _json.dumps(nb).encode()).text
     check("notebook -> Markdown", "# Analiz" in mdtext and "```python" in mdtext and "Output:" in mdtext, mdtext)
     eml = (b"From: a@corp\r\nTo: b@corp\r\nSubject: Iade kurali\r\nMIME-Version: 1.0\r\n"
            b"Content-Type: multipart/mixed; boundary=X\r\n\r\n--X\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
            b"Refunds need approval.\r\n--X\r\nContent-Type: text/csv\r\nContent-Disposition: attachment; filename=r.csv\r\n\r\n"
            b"a,b\r\n1,2\r\n--X--\r\n")
-    mdtext = convert.to_markdown("m.eml", eml)[2]
+    mdtext = convert.convert("m.eml", eml).text
     check("e-mail with attachment -> Markdown", "Iade kurali" in mdtext and "Refunds need approval." in mdtext
-          and "Attachment: r.csv" in mdtext and "<table>" in mdtext, mdtext)
+          and "Attachment: r.csv" in mdtext and "| a | b |" in mdtext, mdtext)
     zbuf = _io.BytesIO()
     with zipfile.ZipFile(zbuf, "w") as z:
         z.writestr("notes/readme.txt", "hello archive")
         z.writestr("page.html", "<h1>Inside</h1><p>zipped <a href='https://x.corp/a'>link</a></p>")
-    mdtext = convert.to_markdown("bundle.zip", zbuf.getvalue())[2]
+    mdtext = convert.convert("bundle.zip", zbuf.getvalue()).text
     check("zip -> every file inside", "## notes/readme.txt" in mdtext and "hello archive" in mdtext and "## Inside" in mdtext
           and "[link](https://x.corp/a)" in mdtext, mdtext)
     rss = b"<?xml version='1.0'?><rss><channel><title>News</title><item><title>Yeni kural</title><link>https://n/1</link><description>&lt;p&gt;Text&lt;/p&gt;</description></item></channel></rss>"
-    mdtext = convert.to_markdown("feed.xml", rss)[2]
+    mdtext = convert.convert("feed.xml", rss).text
     check("RSS feed -> sections", "## Yeni kural" in mdtext and "https://n/1" in mdtext, mdtext)
     from brain import repos as _repos
     check("every repository is updated at least every 24 hours", _repos.due(
@@ -192,22 +188,123 @@ def main():
         ["ACME Corp - Page 1", "body a", "ACME Corp - Page 2", "body b", "ACME Corp - Page 3", "body c"],
         [{convert._norm_line(f"ACME Corp - Page {i}")} for i in (1, 2, 3)]) == ["body a", "body b", "body c"])
 
-    # requirements writer formats
+    # requirements writer: formats are only the user's
     from brain import srs
-    head, secs = srs.parse(srs.DEFAULT_TEMPLATE)
-    check("default format parses", len(secs) == 10 and sum(s["per_capability"] for s in secs) == 1 and "FORMAT GUIDE" not in head)
-    check("requirement IDs numbered", srs._number("FR-? a FR-? b BR-? NFR-X") == "FR-001 a FR-002 b BR-001 NFR-001")
-    try:
-        srs.save_template("bad", "# no sections")
-        check("format without sections rejected", False)
-    except ValueError:
-        check("format without sections rejected", True)
-    check("default format cannot be deleted", _raises(lambda: srs.delete_template("default")))
+    check("no built-in format", srs.templates() == [], srs.templates())
+    head, secs = srs.parse("# {{title}}\nCompany header\n## 1. Purpose\nWhy the system exists.\n## 2. Functional requirements\n"
+                           "### 2.1 Per feature\nREQ-? statements\n## 3. Glossary\nTerms.")
+    check("user format: headings are the sections", [x["heading"] for x in secs] == ["1. Purpose", "2. Functional requirements",
+          "3. Glossary"] and "### 2.1 Per feature" in secs[1]["guidance"] and "Company header" in head, secs)
+    head, secs = srs.parse("# Introduction\ntext\n# Requirements\ntext")
+    check("converted Word template: level-1 headings are the sections", len(secs) == 2, secs)
+    check("requirement IDs numbered per prefix", srs._number("FR-? a FR-? b BR-? REQ-? REQ-XX") == "FR-001 a FR-002 b BR-001 REQ-001 REQ-002")
+    check("format without headings rejected", _raises(lambda: srs.save_template("bad", "just text")))
+    check("writing without a format explains what to do", _raises(lambda: srs.write("billing")))
+    srs.save_template("company", "## Purpose\nWhy.\n## Requirements\nREQ-?")
+    check("a saved format is listed and can be deleted", srs.templates() == ["company"]
+          and (srs.delete_template("company") or srs.templates() == []))
+
+    # the document engine: structure, concepts, keywords (no model needed)
+    from brain.providers import docgraph as dg
+    check("Turkish folding", dg.fold("Müşteri İADE Onayı") == "musteri iade onayi" and dg.lower("İade") == "iade")
+    parts = dg.passages("# Kurallar\n<!-- page 2 -->\n## İade\nİade onayı gerekir.\n\n| Kod | Anlam |\n|---|---|\n| 503 | Banka |\n"
+                        "![Grafik](assets/a.png)\nŞekil 1: İade grafiği", 1500)
+    check("passages: headings, pages, tables, pictures", [(p["kind"], p["path"], p["page"]) for p in parts]
+          == [("text", "İade", 2), ("table", "İade", 2), ("picture", "İade", 2)] and "Şekil 1" in parts[2]["text"], parts)
+    stop = dg._stop()
+    found = dg.concepts_in("The Payment Gateway charges VAT via chargeCustomer and \"partial refund\".", stop)
+    check("concepts without a model", {"payment gateway", "vat", "chargecustomer", "partial refund"} <= set(found), found)
+    check("glossary definitions", dg.definitions_in("text", "- **KDV**: Katma değer vergisi, faturaya eklenir.")
+          == {"kdv": ("KDV", "Katma değer vergisi, faturaya eklenir.")})
+    eng = dg.Provider()
+    eng.start()
+    eng.upload("kurallar.md", "# Kurallar\n## İade\nİade onayı için Payment Gateway kullanılır. İade onayı 3 gün sürer.\n".encode())
+    eng.upload("refund.md", b"# Refund\nThe Payment Gateway retries. See the Kurallar document.\n")
+    r = eng.search("iade onayı", ["iade", "onayı"], 3, 5, ["iade onayı"])
+    check("document search: keywords and concepts", r["chunks"] and r["chunks"][0]["doc"] == "kurallar.md"
+          and "concepts" in r["chunks"][0]["matched"] and any(e["name"] == "iade onayı" for e in r["entities"]), r)
+    g = eng.graph("*", 50, 1)
+    check("document graph: documents, concepts, links", any(n["kind"] == "document" for n in g["nodes"])
+          and any(l["type"] == "refers to" for l in g["links"]), g)
+
+    # document understanding without a model: word forms, rules and limits, table rows, aliases by meaning
+    check("Turkish word forms share one stem", {dg.concept_key(w) for w in ("iadeler", "iadesi", "iadenin", "iadeyi")} == {"iade"}
+          and dg.concept_key("KDV'nin", True, "acronym") == "kdv" and dg.concept_key("Refunds", False) == "refund")
+    rules = dg.rules_in("text", "- 5.000 TL üzeri iadeler için müdür onayı zorunludur.\nKartla ödenen faturalar nakit iade "
+                                "edilemez.\nRefunds over 1,000 EUR must be approved within 3 business days.\nBu belge süreci anlatır.")
+    check("rules: obligation, prohibition, limits; plain sentences skipped",
+          [(r["modality"], r["limits"]) for r in rules] == [("obligation", ["5.000 TL üzeri"]), ("prohibition", []),
+                                                            ("obligation", ["over 1,000 EUR", "within 3 business days"])], rules)
+    rows = dg.rules_in("table", "| Tarife | Limit |\n|---|---|\n| Standart | 5.000 TL |\n| Not | yok |")
+    check("table rows with numbers become facts with their column names",
+          [r["text"] for r in rows] == ["Tarife: Standart; Limit: 5.000 TL"], rows)
+    eng.upload("iade-kurallari.md", ("# İade kuralları\n## Onay\nİade Onayı gerekir. İade Onayının süresi en geç 3 gün "
+                                     "içindedir. 5.000 TL üzeri iadeler için müdür onayı zorunludur.\n").encode())
+    eng.upload("refunds.md", b"# Refunds\nRefund Approval is recorded by the Payment Gateway.\n")
+    keys = {r["key"] for r in eng._q("SELECT key FROM concepts")}
+    check("one concept for every word form", "iade onayi" in keys and "iade onayinin" not in keys, sorted(keys))
+    r = eng.search("müdür onayı zorunlu mu", ["müdür", "onayı", "zorunlu"], 3, 5, [])
+    check("search returns the business rules with their limits",
+          any(x["modality"] == "obligation" and "5.000 TL üzeri" in x["limits"] for x in r["rules"]), r["rules"])
+    import numpy as _np
+    real_embed = dg.llm.embed
+
+    def _fake(texts, timeout=None):   # "iade" and "refund" mean the same; everything else is unrelated
+        out = []
+        for t in texts:
+            v, f = _np.zeros(16), dg.fold(t)
+            v[0 if ("iade" in f or "refund" in f) else 1 + int(hashlib.md5(f.encode()).hexdigest(), 16) % 15] = 1
+            out.append(v.tolist())
+        return out
+    dg.llm.embed = _fake
+    eng._embed_concepts()
+    dg.llm.embed = real_embed
+    r = eng.search("refund approval", ["refund", "approval"], 5, 8, ["refund approval"])
+    ent = {e["name"]: e for e in r["entities"]}
+    check("aliases: a Turkish and an English concept that mean the same are joined",
+          any(dg.fold(a) == "iade onayi" for a in (ent.get("Refund Approval", {}).get("aliases") or []))
+          and any(c["doc"] == "iade-kurallari.md" for c in r["chunks"]), (ent, [c["doc"] for c in r["chunks"]]))
+
+    # decision memory: typed, dated, searchable, replaced by topic, stale when its code disappears
+    from brain import memory, providers as prov
+    real_docs, prov.docs = prov.docs, (lambda: eng)
+    m1 = memory.remember("gotcha", "Refund retries", "Retries stop after three attempts.", "billing", ["src/refund.py"])
+    m2 = memory.remember("gotcha", "Refund retries", "Retries stop after five attempts since 2026-10.", "billing", ["src/refund.py"])
+    got = memory.recall("refund retries")
+    check("memory: replaced by topic, history kept, searchable", not m1["replaced"] and m2["replaced"] and len(got) == 1
+          and "five" in got[0]["text"] and got[0]["history"] and any(d["name"] == m2["name"] + ".md" for d in eng.documents()), got)
+    check("memory: unknown type rejected", _raises(lambda: memory.remember("idea", "x", "y")))
+    (_TMP / "repo" / "src").mkdir(parents=True, exist_ok=True)
+    check("memory: stale when its code path is gone", memory.check_stale("billing", _TMP / "repo") == 1
+          and memory.recall()[0]["stale"] == ["src/refund.py"])
+    memory.forget(m2["name"])
+    check("memory: forgotten with its document", memory.recall() == [] and not any(d["name"].startswith("memory-") for d in eng.documents()))
+    prov.docs = real_docs
+
+    eng.delete([d["id"] for d in eng.documents()])
+    check("documents deleted with everything derived", eng.documents() == [] and eng.labels("") == [])
+    eng.stop()
+
+    # search waits at most BRAIN_EMBED_BUDGET for the API and keeps a late embedding for the next search
+    import time as _time
+    from brain import search as se
+    real_embed = se.llm.embed
+    se.llm.embed = lambda texts, timeout=None: (_time.sleep(0.6), [[1.0, 0.0] for _ in texts])[1]
+    cfg.update({"BRAIN_EMBED_BUDGET": "0.1"})
+    t0 = _time.time()
+    v1 = se.query_vector("a question on a slow gateway")
+    waited = _time.time() - t0
+    _time.sleep(0.8)
+    v2 = se.query_vector("a question on a slow gateway")
+    check("search embedding budget: no long wait, late embedding kept", v1 is None and waited < 0.4 and v2 == [1.0, 0.0],
+          (v1, waited, v2))
+    se.llm.embed = real_embed
+    cfg.update({"BRAIN_EMBED_BUDGET": "3"})
 
     docs = sorted(p.name for p in (ROOT / "docs" / "decisions").glob("ADR-*.md"))
-    check("architecture decision records present", len(docs) >= 22, len(docs))
+    check("architecture decision records present", len(docs) >= 27, len(docs))
     whl = [p.name for p in (ROOT / "wheels").glob("*.whl")]
-    check("bundled wheels present", len(whl) > 100, len(whl))
+    check("bundled wheels present", len(whl) > 30, len(whl))
     check("wheels are for Python 3.13 only", not [w for w in whl if re.search(r"-cp3(?!13)\d+-cp3", w)])
     for f in ("README.md", "INSTALL.html", "setup.ps1", "setup.sh", "brain.cmd", "brain.sh", "requirements.txt",
               "repos.example.json", "bin/SHA256SUMS"):

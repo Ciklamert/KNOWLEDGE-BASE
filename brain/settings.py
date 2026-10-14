@@ -4,8 +4,8 @@ Precedence (highest first): value in the .env file > process environment > schem
 The web UI edits the same .env file in place (comments and order are preserved), so the file and the UI
 can never disagree. Repositories and repository sets are structured data and live in `repos.json`.
 
-Providers may also receive raw pass-through variables:  LIGHTRAG__<NAME>=value  -> <NAME>=value for the
-LightRAG child process, CBM__<NAME>=value -> <NAME>=value for codebase-memory-mcp.
+The code engine may also receive raw pass-through variables: CBM__<NAME>=value -> <NAME>=value for
+codebase-memory-mcp.
 """
 from __future__ import annotations
 
@@ -55,23 +55,25 @@ SCHEMA: list[Setting] = [
     S("BRAIN_DATA_DIR", "data", "Server", "Where all state lives (graphs, documents, clones). Relative = inside the install.", restart="server"),
     S("BRAIN_MAX_UPLOAD_MB", "200", "Server", "Largest accepted document upload.", "int"),
     # ---- corporate OpenAI-compatible API ---------------------------------------------------------------
-    S("BRAIN_LLM_BASE_URL", "", "Corporate API", "OpenAI-compatible base URL, ending in /v1.", restart="docs"),
-    S("BRAIN_LLM_API_KEY", "", "Corporate API", "API key for the base URL.", "secret", restart="docs"),
-    S("BRAIN_LLM_MODEL", "", "Corporate API", "Default chat model (used by every role that has no own model).", restart="docs"),
-    S("BRAIN_EMBEDDING_MODEL", "", "Corporate API", "Embedding model (multilingual, e.g. bge-m3): documents, the multilingual code vectors and re-ranking.", restart="docs"),
-    S("BRAIN_EMBEDDING_DIM", "1024", "Corporate API", "Embedding vector size. Changing it (or the model) requires re-ingesting documents; code vectors rebuild by themselves.", "int", restart="docs"),
-    S("BRAIN_EMBEDDING_BASE_URL", "", "Corporate API", "Only if embeddings live on a different URL.", restart="docs"),
-    S("BRAIN_EMBEDDING_API_KEY", "", "Corporate API", "Only if embeddings need a different key.", "secret", restart="docs"),
-    S("BRAIN_VLM_MODEL", "", "Corporate API", "Vision model for images and scanned pages in documents (optional).", restart="docs"),
-    S("BRAIN_CA_BUNDLE", "", "Corporate API", "Corporate CA certificate (PEM) for TLS interception.", restart="docs"),
-    S("BRAIN_VERIFY_TLS", "true", "Corporate API", "Verify TLS certificates of the corporate API.", "bool", restart="docs"),
+    S("BRAIN_LLM_BASE_URL", "", "Corporate API", "OpenAI-compatible base URL, ending in /v1."),
+    S("BRAIN_LLM_API_KEY", "", "Corporate API", "API key for the base URL.", "secret"),
+    S("BRAIN_LLM_MODEL", "", "Corporate API", "Default chat model (used by every role that has no own model)."),
+    S("BRAIN_EMBEDDING_MODEL", "", "Corporate API", "Embedding model (multilingual, e.g. bge-m3): document passages, the multilingual code vectors and re-ranking.", restart="docs"),
+    S("BRAIN_EMBEDDING_DIM", "1024", "Corporate API", "Embedding vector size. Changing it (or the model) requires re-ingesting documents; code vectors rebuild by themselves.", "int"),
+    S("BRAIN_EMBEDDING_BASE_URL", "", "Corporate API", "Only if embeddings live on a different URL."),
+    S("BRAIN_EMBEDDING_API_KEY", "", "Corporate API", "Only if embeddings need a different key.", "secret"),
+    S("BRAIN_VLM_MODEL", "", "Corporate API", "Vision model (optional): describes pictures, charts and scanned pages in documents, one call per picture, after the text is already searchable."),
+    S("BRAIN_CA_BUNDLE", "", "Corporate API", "Corporate CA certificate (PEM) for TLS interception."),
+    S("BRAIN_VERIFY_TLS", "true", "Corporate API", "Verify TLS certificates of the corporate API.", "bool"),
     S("BRAIN_LLM_TIMEOUT", "120", "Corporate API", "Default seconds for one chat/embedding HTTP call.", "float"),
+    S("BRAIN_EMBED_BATCH", "64", "Corporate API", "Texts per embedding request (document passages, code symbols).", "int"),
+    S("BRAIN_EMBED_PARALLEL", "4", "Corporate API", "Parallel embedding requests while indexing.", "int"),
     # ---- prompt analysis (first step of search, ask and enhance) -----------------------------------------
     S("BRAIN_QUERY_MAX_TERMS", "12", "Relevance", "How many key terms are extracted from a prompt (most important first).", "int"),
     S("BRAIN_STOPWORDS_EXTRA", "", "Relevance",
       "Extra stop-words to ignore, comma separated (company jargon, e.g. proje, ekip, ticket). Built-in: English + Turkish."),
     S("BRAIN_RERANK", "true", "Relevance",
-      "Re-rank code and document results by meaning with the corporate embedding model (multilingual).", "bool"),
+      "Re-rank code candidates by meaning, using the code vectors stored at indexing (no extra API call).", "bool"),
     S("BRAIN_RERANK_CANDIDATES", "30", "Relevance", "How many code candidates are re-ranked (more = better recall, slower).", "int"),
     S("BRAIN_RERANK_WEIGHT", "0.6", "Relevance", "Share of meaning vs. lexical rank in the final order (0-1).", "float"),
     S("BRAIN_DOC_BRIDGE", "true", "Relevance",
@@ -86,6 +88,9 @@ SCHEMA: list[Setting] = [
     S("BRAIN_SEARCH_TOP_K", "8", "Search", "Code hits returned per search.", "int"),
     S("BRAIN_SEARCH_DOC_CHUNKS", "6", "Search", "Document passages returned per search.", "int"),
     S("BRAIN_SEARCH_TIMEOUT", "60", "Search", "Seconds before a search part (code or docs) is abandoned.", "float"),
+    S("BRAIN_EMBED_BUDGET", "3", "Search",
+      "Seconds a search waits for the question's embedding (the only API call a search makes). Past it, the search "
+      "answers from keywords, the graphs and concepts; the embedding is kept for the next search.", "float"),
     S("BRAIN_CONTEXT_MAX_CHARS", "16000", "Search", "Size budget of rendered search context given to agents.", "int"),
     S("BRAIN_SEARCH_DETAIL", "normal", "Search",
       "How much of each code hit search writes for AI agents, MCP and the CLI (less = fewer tokens): brief = location, "
@@ -135,8 +140,6 @@ SCHEMA: list[Setting] = [
       "both = also a code vector index built with the corporate multilingual embedding model (Turkish questions find "
       "English code by meaning; costs one embedding pass per changed symbol after each sync).",
       "choice", ("local", "both")),
-    S("BRAIN_CODE_VECTORS_BATCH", "64", "Code graph", "Symbols per embedding request when building the corporate code vectors.", "int"),
-    S("BRAIN_CODE_VECTORS_PARALLEL", "4", "Code graph", "Parallel embedding requests when building the corporate code vectors.", "int"),
     S("BRAIN_CODE_VECTORS_MAX", "200000", "Code graph", "Largest number of symbols embedded per repository.", "int"),
     # ---- git servers / updates & webhooks (shown on the Repositories page) -----------------------------
     S("BRAIN_DEFAULT_BRANCH", "main", "Updates & webhooks", "Branch the code graph follows when a repository does not name one."),
@@ -167,28 +170,18 @@ SCHEMA: list[Setting] = [
     S("BRAIN_SRS_TEMPERATURE", "0.2", "Requirements writer", "Sampling temperature.", "float"),
     S("BRAIN_SRS_LANGUAGE", "auto", "Requirements writer", "Language of the specification: auto (same as the request), English, Turkish ..."),
     # ---- document graph --------------------------------------------------------------------------------
-    S("BRAIN_DOC_PROVIDER", "lightrag", "Document graph",
+    S("BRAIN_DOC_PROVIDER", "docgraph", "Document graph",
       "Document graph plug-in: a name in brain/providers or 'package.module:Class'.", restart="docs"),
-    S("LIGHTRAG_PORT", "9631", "Document graph", "Internal LightRAG port (127.0.0.1 only).", "int", restart="docs"),
-    S("LIGHTRAG_LLM_MODEL", "", "Document graph", "Chat model for entity extraction (empty = BRAIN_LLM_MODEL).", restart="docs"),
-    S("LIGHTRAG_LLM_TIMEOUT", "240", "Document graph",
-      "LightRAG LLM_TIMEOUT: seconds for one chat call during entity/relation extraction and summaries.", "int",
-      restart="docs"),
-    S("LIGHTRAG_EMBEDDING_TIMEOUT", "60", "Document graph",
-      "LightRAG EMBEDDING_TIMEOUT: seconds for one embedding call.", "int", restart="docs"),
-    S("LIGHTRAG_TIMEOUT", "300", "Document graph",
-      "LightRAG TIMEOUT: seconds the LightRAG server allows for one HTTP request.", "int", restart="docs"),
-    S("LIGHTRAG_STARTUP_TIMEOUT", "180", "Document graph", "Seconds to wait for LightRAG to become healthy.", "float"),
-    S("LIGHTRAG_REQUEST_TIMEOUT", "600", "Document graph", "Seconds for one request from this server to LightRAG.", "float"),
-    S("LIGHTRAG_MAX_ASYNC", "4", "Document graph", "Concurrent LLM calls during ingestion.", "int", restart="docs"),
-    S("LIGHTRAG_MAX_PARALLEL_INSERT", "2", "Document graph", "Documents processed in parallel.", "int", restart="docs"),
-    S("LIGHTRAG_SUMMARY_LANGUAGE", "English", "Document graph", "Language of extracted entity descriptions (English, Turkish ...).", restart="docs"),
-    S("LIGHTRAG_CHUNK_SIZE", "1200", "Document graph", "Tokens per chunk.", "int", restart="docs"),
-    S("LIGHTRAG_CHUNK_OVERLAP", "100", "Document graph", "Token overlap between chunks.", "int", restart="docs"),
-    S("LIGHTRAG_QUERY_MODE", "mix", "Document graph", "Retrieval mode: mix (graph+vectors), hybrid, local, global, naive.",
-      "choice", ("mix", "hybrid", "local", "global", "naive")),
-    S("LIGHTRAG_TOP_K", "20", "Document graph", "Entities/relations retrieved per query.", "int"),
-    S("LIGHTRAG_PARSER", "", "Document graph", "Override LightRAG's parser routing (empty = automatic).", restart="docs"),
+    S("BRAIN_DOC_CHUNK_CHARS", "1500", "Document graph",
+      "Largest passage in characters; documents are split along their headings, tables by rows. Applies to documents "
+      "indexed afterwards (Documents > Re-index all applies it to every document).", "int"),
+    S("BRAIN_CONCEPT_SIM", "0.82", "Document graph",
+      "Meaning similarity (0-1) at which two document concepts count as the same thing (synonyms, Turkish/English "
+      "translations) and at which a question reaches a concept by meaning. Check aliases on the Document graph page; "
+      "raise it if unrelated concepts are joined.", "float"),
+    S("BRAIN_CONCEPT_CODE_SIM", "0.5", "Document graph",
+      "Meaning similarity (0-1) at which search links a document concept to the code that implements it, through the "
+      "stored multilingual code vectors (no API call).", "float"),
 ]
 BY_KEY = {s.key: s for s in SCHEMA}
 REPO_GROUPS = ("Git servers", "Updates & webhooks")   # edited on the Repositories page, not on Settings
@@ -254,7 +247,7 @@ def get(key: str):
 
 
 def passthrough(prefix: str) -> dict[str, str]:
-    """LIGHTRAG__FOO=1 -> {"FOO": "1"} (file values override process environment)."""
+    """CBM__FOO=1 -> {"FOO": "1"} (file values override process environment)."""
     out = {k[len(prefix):]: v for k, v in os.environ.items() if k.startswith(prefix)}
     with _lock:
         out.update({k[len(prefix):]: v for k, v in _file_values.items() if k.startswith(prefix)})
@@ -264,7 +257,7 @@ def passthrough(prefix: str) -> dict[str, str]:
 def validate(key: str, value: str) -> str:
     s = BY_KEY.get(key)
     if s is None:
-        if not re.fullmatch(r"(LIGHTRAG__|CBM__)[A-Z0-9_]+", key):
+        if not re.fullmatch(r"CBM__[A-Z0-9_]+", key):
             raise ValueError(f"unknown setting {key}")
         return value
     value = str(value).strip()
@@ -306,8 +299,8 @@ def update(changes: dict[str, str]) -> list[str]:
         tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
         os.replace(tmp, path)
         reload()
+        _changed()
     return sorted({BY_KEY[k].restart for k in clean if k in BY_KEY and BY_KEY[k].restart}
-                  | ({"docs"} if any(k.startswith("LIGHTRAG__") for k in clean) else set())
                   | ({"code"} if any(k.startswith("CBM__") for k in clean) else set()))
 
 
@@ -320,12 +313,17 @@ def public_view() -> list[dict]:
                     "help": s.help, "kind": s.kind, "choices": list(s.choices),
                     "restart": s.restart, "default": s.default,
                     "value": ("" if s.kind == "secret" else v), "is_set": bool(v)})
-    for prefix in ("LIGHTRAG__", "CBM__"):
+    for prefix in ("CBM__",):
         for k, v in passthrough(prefix).items():
             out.append({"key": prefix + k, "group": "Pass-through", "page": "settings", "help": "Raw variable for the engine.",
-                        "kind": "str", "choices": [], "restart": "docs" if prefix == "LIGHTRAG__" else "code",
+                        "kind": "str", "choices": [], "restart": "code",
                         "default": "", "value": v, "is_set": True})
     return out
+
+
+def _changed() -> None:
+    from . import jobs   # late import: jobs has no settings dependency, settings must not import at load time
+    jobs.tick()
 
 
 # ---------------------------------------------------------------- derived paths
@@ -353,8 +351,8 @@ def secret_key() -> bytes:
 
 
 def model(role: str) -> str:
-    """Chat model for a role (ask, enhance, srs, guide, lightrag) with fallback to BRAIN_LLM_MODEL."""
-    return get({"ask": "BRAIN_ASK_MODEL", "enhance": "BRAIN_ENHANCE_MODEL", "lightrag": "LIGHTRAG_LLM_MODEL",
+    """Chat model for a role (ask, enhance, srs, guide) with fallback to BRAIN_LLM_MODEL."""
+    return get({"ask": "BRAIN_ASK_MODEL", "enhance": "BRAIN_ENHANCE_MODEL",
                 "srs": "BRAIN_SRS_MODEL", "guide": "BRAIN_GUIDE_MODEL"}[role]) \
         or get("BRAIN_LLM_MODEL")
 
@@ -500,9 +498,8 @@ def save_repos(repos: list[dict], sets: dict[str, list[str]] | None = None) -> d
     tmp = f.with_suffix(".tmp")
     tmp.write_text(json.dumps({"repos": clean, "sets": clean_sets}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     os.replace(tmp, f)
+    _changed()
     return {"repos": clean, "sets": clean_sets}
 
 
 reload()
-if (ROOT / "vendor" / "tiktoken_cache").is_dir():  # offline BPE files (LightRAG token counting)
-    os.environ.setdefault("TIKTOKEN_CACHE_DIR", str(ROOT / "vendor" / "tiktoken_cache"))

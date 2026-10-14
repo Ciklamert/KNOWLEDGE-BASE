@@ -132,7 +132,7 @@ details.adv{margin-top:.7rem} details.adv summary{cursor:pointer;color:var(--ink
 .tbl.edit td{padding:.3rem .4rem} .tbl.edit input{width:100%}
 .st{font-size:12.5px;padding:.1rem .5rem;border-radius:20px;background:var(--paper);white-space:nowrap}
 .st.processed,.st.ready,.st.done{color:var(--teal)} .st.failed,.st.error{color:var(--brick)}
-.st.processing,.st.pending,.st.preprocessed,.st.parsing,.st.analyzing,.st.running,.st.starting{color:var(--ochre)}
+.st.processing,.st.running,.st.starting{color:var(--ochre)}
 .del{background:none;border:1px solid var(--rule);color:var(--brick);padding:.2rem .6rem}
 
 /* settings */
@@ -209,3 +209,5 @@ details.evidence{margin-top:1.2rem;background:var(--sheet);border:1px solid var(
 details.evidence>summary{cursor:pointer;font-weight:560}
 ol.timeline{margin:.4rem 0 .8rem;padding-left:1.4rem;font-size:13.5px}
 .pipe-line{color:var(--teal)}
+.md.passage{margin-top:.3rem;font-size:13.5px}.md.passage table{font-size:12.5px}
+.filebtn{cursor:pointer;padding:.35rem .7rem;border:1px solid var(--rule);border-radius:var(--radius-s);font-size:13px}

@@ -15,6 +15,6 @@ Entry-point plug-in discovery (every plug-in would need packaging); a generic "e
 service per engine).
 
 ## Consequences
-Engine-specific code (SQL on the code engine's schema, LightRAG REST paths, document conversion) is confined to
+Engine-specific code (SQL on the code engine's schema, the document engine's index, document conversion) is confined to
 `brain/providers/`. Search, agents, the requirements writer, MCP, REST, UI and webhooks never import an engine
 directly. Guide: [08-PLUGINS.md](../08-PLUGINS.md).

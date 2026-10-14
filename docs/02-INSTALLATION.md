@@ -16,7 +16,7 @@ The same guide as a web page with Windows and Linux tabs: [INSTALL.html](../INST
 
 ## 2. Nothing to download
 The folder contains every Python package for Python 3.13 on Windows and Linux (`wheels/`), the code engine for
-both systems (`bin/`) and the tokenizer files LightRAG needs (`vendor/`). Setup installs with
+both systems (`bin/`). Setup installs with
 `pip --no-index`, so no internet access is needed at any step. Details: [14-OFFLINE-PACKAGING.md](14-OFFLINE-PACKAGING.md).
 
 ## 3. Copy the folder
@@ -58,7 +58,7 @@ Required:
 | `BRAIN_UI_PASSWORD` | a strong password | login for the UI and for basic auth (user `BRAIN_UI_USER`, default `admin`) |
 | `BRAIN_LLM_BASE_URL` | `https://llm-gateway.corp.local/v1` | the corporate OpenAI-compatible API; must end in `/v1` |
 | `BRAIN_LLM_API_KEY` | `sk-…` | its key |
-| `BRAIN_LLM_MODEL` | `qwen3-32b` | default chat model for ask, enhance, the requirements writer and LightRAG |
+| `BRAIN_LLM_MODEL` | `qwen3-32b` | default chat model for ask, enhance, the project guide and the requirements writer |
 | `BRAIN_EMBEDDING_MODEL` | `bge-m3` | multilingual embedding model (documents, code vectors, re-ranking) |
 | `BRAIN_EMBEDDING_DIM` | `1024` | its vector size; `brain doctor` prints the real size |
 
@@ -72,7 +72,6 @@ Often useful:
 | `BRAIN_GITLAB_URL`, `BRAIN_GITLAB_TOKEN` | `https://gitlab.corp.local` | corporate GitLab and a read token; repositories can be written as `gitlab:group/project` |
 | `BRAIN_TFS_URL`, `BRAIN_TFS_TOKEN` | `https://tfs.corp.local/tfs/DefaultCollection` | corporate TFS collection and a read token; repositories can be written as `tfs:Project/repo` |
 | `BRAIN_GIT_CA_BUNDLE` | `C:\certs\corp-ca.pem` | internal CA certificate of the git servers |
-| `LIGHTRAG_SUMMARY_LANGUAGE` | `Turkish` | language of the entity descriptions LightRAG writes |
 
 Every other value has a default; all of them are listed in [03-CONFIGURATION.md](03-CONFIGURATION.md) and can be
 changed later in the UI (**Settings**, and **Repositories** for git servers and webhooks).
@@ -99,8 +98,8 @@ every component, every job with its progress, and any error with its log.
    detected), either a git **URL** (`gitlab:group/project`, `tfs:Project/repo` or a full URL; the server clones it)
    or a local **path** on the server, the **branch** to follow (default `main`) and, only if needed, an own token.
 2. *Repository sets*: tick the repositories of each set (for example `payments`).
-3. **Save repositories and sets**, then **Update all now**. Progress appears on Overview and Repositories; the
-   first index of 10,000 files takes a few minutes, later updates take seconds.
+3. **Save repositories and sets**: every new repository is indexed at once on its branch (changing a repository's
+   branch re-indexes it). Progress appears on Overview and Repositories; the first index of 10,000 files takes a few minutes, later updates take seconds.
 
 Or edit `repos.json` directly (format: `repos.example.json`, details: [04-REPOSITORIES-AND-SETS.md](04-REPOSITORIES-AND-SETS.md)).
 

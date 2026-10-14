@@ -8,15 +8,15 @@ setup accepts only a 3.13 interpreter (and rebuilds `.venv` if it was made with 
 refuses to start on any other version with a clear message.
 
 ## Why
-The installation must work without internet. Supporting every version from 3.10 up would mean shipping about 1 GB of
-wheels for five versions, or a separate preparation step on an internet machine before each installation. One version
-gives one tested package set, a 225 MB bundle and no preparation step. 3.13 is a current, stable release for which
+The installation must work without internet. Supporting every version from 3.10 up would mean shipping five times the
+wheels (one set per version), or a separate preparation step on an internet machine before each installation. One version
+gives one tested package set, an 80 MB bundle and no preparation step. 3.13 is a current, stable release for which
 every dependency publishes wheels.
 
 ## Alternatives
 | Option | Why not |
 |---|---|
-| any version from 3.10, all wheels bundled | about 1 GB in the folder, five versions to test |
+| any version from 3.10, all wheels bundled | five times the wheels, five versions to test |
 | any version from 3.10, wheels prepared per site | needs an internet machine and an extra step before every installation |
 
 ## Consequences

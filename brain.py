@@ -171,6 +171,21 @@ def cmd_drift(a):
     print(r["markdown"])
 
 
+def cmd_impact(a):
+    """What a change reaches and which tests to run: the files given, or the local branch's changes (for CI)."""
+    path = Path(a.path).resolve()
+    files = a.files
+    repo = a.repo
+    if not files:
+        facts = local_git_facts(path, a.main)
+        if not facts["branch"]:
+            sys.exit(f"{path} is not a git checkout; pass the changed files")
+        files, repo = facts["changed_files"], repo or _guess_repo(facts["remote"], path)
+    if not files:
+        sys.exit("no changed files")
+    print(api("POST", "/api/impact", {"files": files, "repos": [repo] if repo else None})["markdown"])
+
+
 def cmd_connect(a):
     url, token = base_url(), cfg.get("BRAIN_API_TOKEN") or "<BRAIN_API_TOKEN>"
     which = {"claude", "opencode", "pi"} if a.agent == "all" else {a.agent}
@@ -193,7 +208,7 @@ def cmd_connect(a):
 
 def cmd_doctor(_):
     from brain import llm
-    from brain.providers import codebase_memory, lightrag
+    from brain.providers import codebase_memory
     ok = True
 
     def row(name, good, info=""):
@@ -219,8 +234,13 @@ def cmd_doctor(_):
         r = subprocess.run([str(codebase_memory.binary()), "--version"], capture_output=True, text=True)
         row("code engine runs", r.returncode == 0, (r.stdout or r.stderr).strip()[:120]
             + ("" if r.returncode == 0 else "  (antivirus quarantine? see docs/13-OPERATIONS.md)"))
-    row("lightrag-server installed", bool(lightrag.server_exe()), lightrag.server_exe() or "re-run setup")
-    for mod in ("fastapi", "uvicorn", "httpx", "pdfplumber", "pypdfium2", "pptx", "openpyxl"):
+    import sqlite3
+    try:
+        sqlite3.connect(":memory:").execute("CREATE VIRTUAL TABLE t USING fts5(x)")
+        row("sqlite full-text search (FTS5)", True, sqlite3.sqlite_version)
+    except sqlite3.Error as exc:
+        row("sqlite full-text search (FTS5)", False, f"{exc}: the document engine needs it")
+    for mod in ("fastapi", "uvicorn", "httpx", "multipart", "numpy", "pdfplumber", "pypdfium2", "docx", "pptx", "openpyxl", "PIL"):
         try:
             __import__(mod)
             row(f"python package {mod}", True)
@@ -274,6 +294,12 @@ def main():
     p.add_argument("--repo")
     p.add_argument("--main", default="main")
     p.set_defaults(f=cmd_drift)
+    p = sub.add_parser("impact")
+    p.add_argument("files", nargs="*")
+    p.add_argument("--repo")
+    p.add_argument("--path", default=".")
+    p.add_argument("--main", default="main")
+    p.set_defaults(f=cmd_impact)
     p = sub.add_parser("hook")
     p.add_argument("path", nargs="?", default=".")
     p.add_argument("--repo")

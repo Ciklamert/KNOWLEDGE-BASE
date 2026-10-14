@@ -34,10 +34,7 @@ REL_EDGES = ("CALLS", "INHERITS", "IMPLEMENTS", "OVERRIDE", "HTTP_CALLS", "ASYNC
              "EMITS", "LISTENS_ON", "DATA_FLOWS", "THROWS")
 SKIP_LABELS = ("Folder", "Project", "Branch", "Variable", "Field", "Section", "File")
 TESTY = re.compile(r"(^|/)(tests?|__tests__|spec|testing)(/|$)|Tests?\.|_test\.|\.spec\.|\.test\.", re.I)
-TOOLS = {  # agent-facing deep tools -> CBM tool names
-    "trace": "trace_path", "snippet": "get_code_snippet", "query_graph": "query_graph",
-    "architecture": "get_architecture", "file_outline": "get_file_outline",
-}
+TOOLS = {"trace": "trace_path", "architecture": "get_architecture"}   # deep tools -> engine tool names
 
 
 NOISE = re.compile(r"^\s*(?:total\w*|\w*offset|limit|returned|\w+_returned|raw_\w+|directories_\w+|elapsed_ms|"
@@ -552,6 +549,82 @@ class Provider(CodeGraph):
         out.sort(key=lambda h: -h["score"])
         return out[:limit]
 
+    SYMBOL_LABELS = ("Function", "Method", "Class", "Interface", "Enum", "Struct", "Trait", "Type", "Record",
+                     "Object", "Module")
+    DEPENDS = ("CALLS", "HTTP_CALLS", "ASYNC_CALLS", "INHERITS", "IMPLEMENTS", "OVERRIDE")
+
+    def impact(self, project: str, files: list[str] | None = None, symbols: list[str] | None = None,
+               depth: int = 3) -> dict:
+        """What a change reaches, from the graph alone: the changed symbols (in `files`, or named in `symbols`), the
+        code that depends on them up to `depth` hops (callers, subclasses, overrides), the entry points that lead
+        there (routes and their handlers, or callers nothing else calls) and the tests to run (TESTS edges and test
+        code among the dependants)."""
+        con = self._db(project)
+        lab = ",".join("?" * len(self.SYMBOL_LABELS))
+        seeds: dict[int, sqlite3.Row] = {}
+        for f in files or []:
+            f = f.replace("\\", "/").removeprefix("./")
+            for r in con.execute(f"""SELECT id, label, name, qualified_name, file_path, start_line FROM nodes
+                    WHERE label IN ({lab}) AND (file_path = ? OR file_path LIKE ?) AND label != 'Module'""",
+                                 (*self.SYMBOL_LABELS, f, "%/" + f)):
+                seeds[r["id"]] = r
+        for s in symbols or []:
+            tail = s.rsplit(".", 1)[-1]
+            for r in con.execute(f"""SELECT id, label, name, qualified_name, file_path, start_line FROM nodes
+                    WHERE label IN ({lab}) AND name = ? AND file_path NOT LIKE '<%'""", (*self.SYMBOL_LABELS, tail)):
+                if r["qualified_name"] == s or r["qualified_name"].endswith("." + s) or s == tail:
+                    seeds[r["id"]] = r
+        dep = ",".join("?" * len(self.DEPENDS))
+        level = {i: 0 for i in seeds}
+        info: dict[int, sqlite3.Row] = dict(seeds)
+        via: dict[int, int] = {}
+        frontier = list(seeds)
+        for d in range(1, max(1, min(int(depth), 6)) + 1):
+            if not frontier or len(level) > 2000:
+                break
+            q = ",".join("?" * len(frontier))
+            nxt = []
+            for r in con.execute(f"""SELECT e.target_id t, a.id, a.label, a.name, a.qualified_name, a.file_path,
+                    a.start_line FROM edges e JOIN nodes a ON a.id = e.source_id
+                    WHERE e.target_id IN ({q}) AND e.type IN ({dep}) AND a.file_path NOT LIKE '<%'""",
+                                 (*frontier, *self.DEPENDS)):
+                if r["id"] not in level:
+                    level[r["id"]], info[r["id"]], via[r["id"]] = d, r, r["t"]
+                    nxt.append(r["id"])
+            frontier = nxt
+        ids = list(level)
+        q = ",".join("?" * len(ids)) or "NULL"
+        tests: dict[int, sqlite3.Row] = {}
+        for r in con.execute(f"""SELECT a.id, a.label, a.name, a.qualified_name, a.file_path, a.start_line FROM edges e
+                JOIN nodes a ON a.id = e.source_id WHERE e.type = 'TESTS' AND e.target_id IN ({q})""", ids):
+            tests[r["id"]] = r
+        for i in ids:
+            if TESTY.search(info[i]["file_path"] or ""):
+                tests[i] = info[i]
+        routes = [{"route": r["route"], "handler": short(r["hq"]), "path": r["fp"]} for r in con.execute(
+            f"""SELECT b.name route, a.qualified_name hq, a.file_path fp FROM edges e JOIN nodes a ON a.id = e.source_id
+                JOIN nodes b ON b.id = e.target_id WHERE e.type = 'HANDLES' AND e.source_id IN ({q})""", ids)]
+        called = {r[0] for r in con.execute(f"""SELECT DISTINCT target_id FROM edges WHERE target_id IN ({q})
+                AND type IN ({dep}) AND source_id IN (SELECT id FROM nodes WHERE file_path NOT LIKE '<%')""",
+                                            (*ids, *self.DEPENDS))}
+        con.close()
+
+        def item(r, d=None):
+            out = {"symbol": short(r["qualified_name"]), "label": r["label"], "path": r["file_path"],
+                   "line": r["start_line"]}
+            if d is not None:
+                out["depth"] = d
+                if r["id"] in via:
+                    out["via"] = short(info[via[r["id"]]]["qualified_name"])
+            return out
+        affected = sorted((i for i in ids if i not in seeds and i not in tests), key=lambda i: (level[i], info[i]["file_path"]))
+        tops = [i for i in affected if i not in called and info[i]["label"] != "Module"]
+        return {"project": project, "changed": [item(r) for r in seeds.values()],
+                "affected": [item(info[i], level[i]) for i in affected],
+                "entry_points": {"routes": routes, "top_callers": [item(info[i], level[i]) for i in tops]},
+                "tests": [item(r) for r in sorted(tests.values(), key=lambda r: (r["file_path"], r["start_line"]))],
+                "test_files": sorted({r["file_path"] for r in tests.values()})}
+
     def outline(self, project: str, path: str) -> str:
         """Declarations of one file with their line ranges: read this before reading lines."""
         text = self.mcp.call("get_file_outline", {"project": project, "file_path": path.replace("\\", "/").lstrip("./"),
@@ -561,7 +634,7 @@ class Provider(CodeGraph):
     def tool(self, name: str, args: dict) -> str:
         if name not in TOOLS:
             raise ValueError(f"unknown code tool {name}; available: {', '.join(TOOLS)}")
-        if name in ("trace", "snippet"):
+        if name == "trace":
             args = {"max_output_tokens": cfg.get("BRAIN_TOOL_MAX_TOKENS"), **args}
         text, _ = self.mcp.call(TOOLS[name], args, cfg.get("CBM_QUERY_TIMEOUT"))
         return tidy(text)

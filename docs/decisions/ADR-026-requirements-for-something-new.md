@@ -1,33 +1,32 @@
-# ADR-026 - Requirements for something new
+# ADR-026 - One requirements writer for system requirements and for the current system
 
-**Status:** accepted · **Requirement:** R31
+**Status:** accepted · **Requirements:** R31, R34
 
 ## Context
-The requirements writer describes what exists: every requirement comes from the code or the documents. Teams also
-need to specify a capability that does not exist yet and is not mentioned anywhere, written in the organisation's
-terms and consistent with the current system.
+Teams receive system requirements (or a new idea) and must turn them into software requirements that fit the current
+system: what already exists, what must change, what is new, which rules apply and which systems are affected. They
+also need to describe what a system does today. Both are the same job with a different request, and choosing a mode
+first is one more thing to get wrong.
 
 ## Decision
-- A **mode** on the requirements writer: `existing` (default) or `new` (UI *What exists* / *Something new*; API and
-  MCP `mode`).
-- In `new` mode the same pipeline runs with different instructions:
-  - the **plan** takes the capabilities from the request, not from the evidence;
+- **One request field, no mode.** The request is system requirements, a new idea, a topic of the current system, or a
+  mix; any length, pasted or loaded from a Word, PDF or other file through `POST /api/convert`.
+- One pipeline and one set of instructions:
+  - the **plan** takes the capabilities from the request when it asks for something (every part of it must belong to
+    one) and from the evidence when it names a topic, and records the part of the request each capability comes from;
   - the **searches** look for the related existing code, rules and documents;
-  - the **writer** follows its own grounding rules: facts about the current system only from the evidence; the new
-    behaviour proposed from the request; every choice the request leaves open marked "to be confirmed"; never a
-    claim that the new behaviour exists;
-  - **Status** values are *New*, *Changes existing behaviour* and *Partly implemented*.
-- A built-in **`new-feature`** format with the sections a proposal needs: current situation, proposed solution,
-  functional and quality requirements, impact on the current system, rollout and migration, assumptions and open
-  questions. Any other format can be used too.
-- The appendix lists the **related existing system** (code and documents each new capability touches) instead of
-  traceability.
+  - the **writer** takes facts about the current system only from the evidence, proposes behaviour the request leaves
+    open and marks it "to be confirmed", and never claims that new behaviour exists;
+  - each requirement gets a **status**: *Implemented*, *Partly implemented*, *Changes existing behaviour*, *New*,
+    *Documented only* or *Implemented, not documented*, in the format's status field or as "(Status: …)".
+- The appendix lists, per capability, the code and documents the requirements were checked against.
 
 ## Alternatives
-A separate "proposal writer" (a second pipeline and UI for the same job); writing new requirements with Ask (no
-format, no EARS, no numbering); asking the model without the knowledge base (requirements in foreign terms that
-ignore existing rules and the systems they affect).
+Two modes (describe / from system requirements): the same pipeline behind a switch people must set correctly, and a
+request that mixes both fits neither. A separate proposal writer; writing requirements with Ask (no format, no
+numbering); asking the model without the knowledge base (requirements in foreign terms that ignore existing rules and
+the systems they affect).
 
 ## Consequences
-A proposal for a new capability comes out in the same quality and format as a description of the current system,
-and shows what it changes and what the business still has to decide.
+Whatever the user gives, the result is software requirements in the organisation's own format, with a clear
+statement of what the current system already does and what has to be built or changed.

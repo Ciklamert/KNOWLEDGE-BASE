@@ -22,6 +22,7 @@ ordered list of concrete recommendations. It is available as MCP `check_branch`,
 | the branch is behind `main`, no file changed on both sides | `rebase_safe`: rebasing should be clean |
 | the branch contains the latest `main` | reported as a fact: no merge drift |
 | the developer changed files | `trust_local_files`: for these files read the working copy; use AI-BRAIN for everything else |
+| tests cover the changed files or the code that calls them | `run_tests`: the test files to run before pushing (from `impact`); `tests_to_run` lists the single tests |
 | 10 or more changed files on a branch | `index_branch`: build a branch overlay so search and agents see the branch's code |
 | an overlay exists but is older than the branch head | `refresh_overlay` |
 | no merge-base can be determined | `send_git_facts`: push the branch, or pass `base_commit` and `changed_files` |

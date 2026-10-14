@@ -11,7 +11,7 @@ one file.
 ## Decision
 1. **A short tool list.** Terse descriptions; the scope arguments (`repo`, `set`, `branch`) are explained once in
    the server instructions instead of in every schema; `symbol` also returns the source, so no separate snippet
-   tool is needed. 16 tools in about 5,400 characters (≈ 1,340 tokens).
+   tool is needed. 18 tools in about 6,000 characters (≈ 1,500 tokens).
 2. **Exact tools for exact questions.** `symbol` (location, signature, source when short, callers, callees,
    parents), `outline` (a file's declarations with line ranges), `read` (a line range; the repository is found when
    not given), `grep` (`mode=files` to only locate, `path` to limit to a folder), `files`, `overview`.

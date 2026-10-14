@@ -1,27 +1,23 @@
-"""Requirements writer: a Software Requirements Specification (SRS) that any person can read, following an editable
-FORMAT (template), in one of two modes:
-  * existing (default): describe what the system does and what the documents say, from the codebases (code graph)
-    and the documents (document graph);
-  * new: specify a capability that does not exist yet, from the request. The knowledge base is used as context
-    (current behaviour, terms, rules, systems to connect to, what the change affects), not as the source of the
-    requirements; nothing new is claimed to exist.
+"""Requirements writer: a Software Requirements Specification (SRS) in plain language, in YOUR format.
 
-Formats (data/srs/templates/*.md, editable in the UI) are plain Markdown:
-  * `#` line          the document title; {{title}}, {{date}}, {{scope}}, {{language}} are filled in;
-  * `##` sections     written in order; the `>` lines right under a heading are the instructions for that
-                      section (they are not copied to the output); text without `>` is kept as written;
-  * `[per capability]` in a section's instructions: that section is written once PER CAPABILITY (feature area)
-                      with a `###` heading each, e.g. the functional requirements;
-  * <!-- comments --> are notes for the format author and are removed.
+Formats are entirely the user's: there is no built-in one. A format is any Markdown document (typed in the UI, or a
+Word/PDF template converted with /api/convert): its headings are the sections to write, in order, and the text under
+each heading says what belongs there (or is example text to replace). The writer follows the format's sections,
+numbering, requirement IDs and fields exactly; {{title}}, {{date}}, {{scope}} and {{language}} are filled in when used.
+
+One request field, no modes. The request is whatever the user gives, of any length (pasted, or converted from a
+document): a topic of the current system ("refunds"), system requirements, a new idea, or a mix. The writer checks it
+against the current code (code graph) and documents (document graph) and gives every requirement a status: what
+already exists, what must change, what is new. Nothing new is claimed to exist.
 
 Engine (one background job, progress visible):
-  1. evidence: relevance-pipeline search for the topic, an architecture overview of every repository in scope,
-     document passages and domain entities;
-  2. plan: the model lists the capabilities (feature areas, in business words) with search queries for each;
-  3. per capability: targeted search + a grounded writing call (tools allowed) -> requirements in EARS form;
-  4. every other section: one grounded call with the section instructions, the plan and the capability texts;
-  5. assemble: IDs numbered (FR-001, BR-001, NFR-001 ...), traceability appendix with the code and document
-     sources for the technical team (the body stays free of technical detail), saved to data/srs/output/.
+  1. evidence: a search for the request, an architecture overview of every repository in scope, documents;
+  2. plan: the model lists the capabilities (feature areas in business words) with search queries and the part
+     of the request each one comes from, and picks the format sections to write once per capability;
+  3. per capability: a targeted search + a grounded writing call (tools allowed);
+  4. every other section: one grounded call with the section's guidance, the plan and the capability texts;
+  5. assemble: placeholders filled, IDs like "FR-?" numbered per prefix, an appendix for the technical team with the
+     code and documents behind each capability; saved to data/srs/output/.
 """
 from __future__ import annotations
 
@@ -34,188 +30,58 @@ from pathlib import Path
 from . import agents, llm, query as qa, search
 from . import settings as cfg
 
-SRS_SYSTEM = f"""You are the AI-BRAIN requirements writer: a senior business analyst who writes Software Requirements
-Specifications that business people, testers and managers understand without technical knowledge. You derive
-requirements from evidence: what the current system's code DOES and what the organisation's documents SAY.
-
-{agents.GROUNDING}
-
-<writing_rules>
-- Plain language for non-technical readers. Do NOT mention class, function, file, table, endpoint or library names,
-  programming languages or frameworks in the text. Translate technical facts into business behaviour
-  (e.g. "retries the bank request three times" instead of "PaymentGateway.charge loops 3 times").
-- Each requirement is ONE testable statement in EARS form, using "shall":
-    Ubiquitous:  The <system> shall <response>.
-    Event:       When <trigger>, the <system> shall <response>.
-    State:       While <state>, the <system> shall <response>.
-    Unwanted:    If <unwanted condition>, then the <system> shall <response>.
-    Optional:    Where <feature is included>, the <system> shall <response>.
-- Quality (ISO/IEC/IEEE 29148): necessary, unambiguous (no "fast", "user-friendly", "etc.", "and/or"), complete,
-  singular (one behaviour per requirement), feasible, verifiable (measurable values where the evidence gives them),
-  consistent with the other requirements.
-- Requirement IDs: write FR-? for functional, BR-? for business rules, NFR-? for quality requirements; they are
-  numbered automatically afterwards.
-- Under each functional requirement: **Why:** one sentence (business reason); **Acceptance criteria:** 1-3 bullets
-  in Given / When / Then form; **Status:** Implemented | Partly implemented | Documented only (in documents, not
-  found in code) | Implemented, not documented.
-- Never invent behaviour, numbers or rules. If something important is unknown, put it under open issues.
+WRITING_RULES = """<writing_rules>
+- Follow the FORMAT exactly: its sections, headings, numbering, requirement ID style, fields and conventions. The text
+  under a format heading tells you what to write there; replace example text, keep fixed text.
+- Plain language for business people, testers and managers. Do NOT mention class, function, file, table, endpoint or
+  library names, programming languages or frameworks; describe business behaviour ("retries the bank request three
+  times", not "PaymentGateway.charge loops 3 times").
+- One testable statement per requirement, with "shall", unless the format prescribes another sentence style.
+- Quality (ISO/IEC/IEEE 29148): necessary, unambiguous (no "fast", "user-friendly", "etc."), complete, singular,
+  feasible, verifiable (measurable values where known), consistent.
+- Requirement IDs: use the format's style with "?" for the number (e.g. FR-?, SRS-?); they are numbered afterwards.
 - Output Markdown only, no preamble.
 </writing_rules>"""
 
-PLAN_SYSTEM = """You plan a Software Requirements Specification. From the evidence, identify the CAPABILITIES (feature
-areas a business user would recognise, e.g. "Customer invoicing", "Refunds", "User sign-in") within the requested
-topic and scope. Return ONLY JSON:
-{"system_name": "<plain name of the system>", "summary": "<2-3 plain sentences>",
- "capabilities": [{"name": "<business name>", "description": "<one plain sentence>",
-                   "queries": ["<search query>", "<search query in English code terms>"]}],
- "glossary": [{"term": "<business term>", "definition": "<plain definition>"}]}
-Order capabilities by importance. Use the language requested for names, descriptions and glossary."""
-
-NEW_GROUNDING = """<grounding_rules>
-- Facts about the CURRENT system (what exists, how it works, its rules) come ONLY from <knowledge_base> and your tool
-  results; never invent them. The NEW capability is proposed from the request.
-- When the material says nothing about something the new capability needs, propose sensible behaviour and mark it
-  "to be confirmed"; do not present it as existing.
-- Code shows what the system DOES; documents show what it SHOULD do. Report conflicts that affect the new capability.
+RULES = """<grounding_rules>
+- The REQUEST is the source of the requirements. It is either a topic of the current system (then describe what the
+  system does and what the documents say about it), or system requirements / a new idea (then cover every part of
+  it), or a mix of both.
+- Facts about the CURRENT system come ONLY from <knowledge_base> and your tool results; never invent behaviour,
+  numbers or rules. Use them to say what already exists, what must change, which rules apply and which systems and
+  data are affected.
+- Where the request asks for something the system does not do and is silent on details, propose sensible, testable
+  behaviour and mark it "to be confirmed". Unknowns about the current system go to the open issues.
+- Code shows what the system DOES; documents what it SHOULD do. Report conflicts that matter for the request.
 - When the scope is a set of repositories, consider EVERY repository in the set.
 - Write in the SAME LANGUAGE as the request.
-</grounding_rules>"""
+</grounding_rules>
 
-NEW_RULES = """<new_feature_rules>
-This specification is for something NEW that the request asks for: it is not implemented yet and may not be
-mentioned in any document. The knowledge base is CONTEXT, not the source of the requirements:
-- Derive the requirements from the request. Choose sensible, testable behaviour for what the request leaves open,
-  and list every choice you made under the open issues as "to be confirmed".
-- Use the knowledge base for the current behaviour, business terms, rules that the new capability must respect,
-  data it reuses, systems it connects to, and the existing capabilities it changes. Use the organisation's own terms.
-- Never claim that the new behaviour already exists. If the evidence shows that part of it exists, say so.
-- Status of each functional requirement: New | Changes existing behaviour | Partly implemented.
-</new_feature_rules>"""
+<status_rules>
+Where the format has a status field use it, otherwise add "(Status: …)" to each requirement: Implemented |
+Partly implemented | Changes existing behaviour | New | Documented only (in documents, not in code) | Implemented, not
+documented. Never claim that new behaviour already exists.
+</status_rules>"""
 
-SRS_NEW_SYSTEM = SRS_SYSTEM.replace(agents.GROUNDING, NEW_GROUNDING).replace(
-    "You derive\nrequirements from evidence: what the current system's code DOES and what the organisation's documents SAY.",
-    "You specify NEW\ncapabilities from a request, consistent with what the current system does and what the documents say.") \
-    .replace("**Status:** Implemented | Partly implemented | Documented only (in documents, not\n  found in code) | "
-             "Implemented, not documented.", "**Status:** New | Changes existing behaviour | Partly implemented.") \
-    .replace("- Never invent behaviour, numbers or rules. If something important is unknown, put it under open issues.",
-             "- Never invent facts about the CURRENT system; new behaviour is proposed, and every assumption goes under "
-             "open issues as \"to be confirmed\".") + "\n\n" + NEW_RULES
+ROLE = """You are the AI-BRAIN requirements writer: a senior business analyst who writes Software Requirements
+Specifications that people without technical knowledge understand."""
 
-PLAN_NEW_SYSTEM = """You plan a Software Requirements Specification for a NEW capability that the request asks for (it does
-not exist yet). Identify the CAPABILITIES the new feature needs, from the REQUEST (use the evidence only to name
-things the way the organisation does and to see which existing capabilities are affected). Return ONLY JSON:
-{"system_name": "<plain name of the new capability>", "summary": "<2-3 plain sentences: what is new and why>",
+PLAN = """You plan a Software Requirements Specification. Identify the CAPABILITIES (feature areas a business user
+recognises, e.g. "Customer invoicing", "Refunds"): for a topic of the current system, the ones the evidence shows within
+it; for system requirements or a new idea, the ones it asks for (every part of the request must belong to a
+capability), named the way the organisation does. Return ONLY JSON:
+{"system_name": "<plain name>", "summary": "<2-3 plain sentences>",
  "capabilities": [{"name": "<business name>", "description": "<one plain sentence>",
-                   "queries": ["<search query for related existing code or rules>", "<the same in English code terms>"]}],
+                   "excerpt": "<the words of the request this capability comes from>",
+                   "queries": ["<search query for related code or rules>", "<the same in English code terms>"]}],
+ "per_capability_sections": [<numbers of the format sections that must be written once per capability, e.g. the
+                              functional requirements; [] if none>],
  "glossary": [{"term": "<business term>", "definition": "<plain definition>"}]}
 Order capabilities by importance. Use the language requested for names, descriptions and glossary."""
 
-DEFAULT_TEMPLATE = """# Software Requirements Specification - {{title}}
-<!-- FORMAT GUIDE (this comment is removed from the output)
-     - "## " starts a section; the "> " lines under it are the instructions the writer follows.
-     - Put [per capability] in a section's instructions to write that section once per capability.
-     - Placeholders: {{title}} {{date}} {{scope}} {{language}}. Text without "> " is copied as it is. -->
-
-| | |
-|---|---|
-| Version | Draft generated by AI-BRAIN on {{date}} |
-| Scope | {{scope}} |
-
-## 1. Introduction
-> In plain words: what this system (or feature) is for, who this document is for, and what is in and out of
-> scope. Two or three short paragraphs.
-
-## 2. Users and stakeholders
-> A table "User group | What they need from the system", only for groups supported by the evidence.
-
-## 3. System overview
-> A short story of how people use the system from start to finish, then a bulleted list of the capabilities
-> (one line each, business words only).
-
-## 4. Functional requirements
-> [per capability] One sentence about the purpose of the capability, then its requirements FR-? in EARS form,
-> each with Why, Acceptance criteria (Given/When/Then) and Status.
-
-## 5. Business rules
-> Numbered rules BR-? (calculations, limits, approvals, validations, time limits) in plain language, each naming
-> the capability it belongs to.
-
-## 6. Quality requirements
-> NFR-? for performance, availability, security and privacy, usability, auditability and compliance, only where
-> the evidence supports them; missing ones go to section 9 as "to be decided".
-
-## 7. Information the system keeps
-> The main kinds of information the system stores, in plain words, and who may see or change them.
-
-## 8. Connections to other systems
-> Other systems or organisations the system exchanges information with (e.g. a bank, e-mail), in plain words.
-
-## 9. Assumptions, conflicts and open issues
-> Assumptions made, conflicts between documents and the current system, and questions the business must answer.
-
-## 10. Glossary
-> A table "Term | Meaning" for the business terms used in this document.
-"""
-
-
-NEW_TEMPLATE = """# Software Requirements Specification - {{title}} (new)
-<!-- FORMAT GUIDE: the format for "something new". Same rules as the default format. -->
-
-| | |
-|---|---|
-| Version | Proposal drafted by AI-BRAIN on {{date}} |
-| Scope | {{scope}} |
-| Status | Proposed: not implemented yet |
-
-## 1. Introduction
-> In plain words: what is requested, why it is needed, who this document is for, and what is in and out of scope.
-
-## 2. Current situation
-> How the related part of the system works today and which business rules already apply, from the evidence only.
-> Say clearly if nothing related exists yet.
-
-## 3. Users and stakeholders
-> A table "User group | What they need from the new capability".
-
-## 4. Proposed solution overview
-> A short story of how people will use the new capability from start to finish, then a bulleted list of its
-> capabilities (one line each, business words only).
-
-## 5. Functional requirements
-> [per capability] One sentence about the purpose of the capability, then its requirements FR-? in EARS form,
-> each with Why, Acceptance criteria (Given/When/Then) and Status (New, Changes existing behaviour, Partly implemented).
-
-## 6. Business rules
-> Numbered rules BR-? the new capability introduces or must respect (existing rules: say so).
-
-## 7. Quality requirements
-> NFR-? for performance, availability, security and privacy, usability, auditability and compliance; values the
-> request does not give are proposed and marked "to be confirmed".
-
-## 8. Impact on the current system
-> Existing capabilities, information and connections to other systems that change, in plain words, and what users of
-> those capabilities will notice.
-
-## 9. Rollout and migration
-> How the new capability can be introduced: existing data to convert, switch-over, training, only if relevant.
-
-## 10. Assumptions and open questions
-> Every choice made where the request was silent, as "to be confirmed", and the questions the business must answer.
-
-## 11. Glossary
-> A table "Term | Meaning" for the business terms used in this document.
-"""
-BUILT_IN = {"default": DEFAULT_TEMPLATE, "new-feature": NEW_TEMPLATE}
-MODES = ("existing", "new")
-
-
-# ---------------------------------------------------------------- formats (templates)
+# ---------------------------------------------------------------- formats (the user's own)
 def _tdir() -> Path:
-    d = cfg.path("srs", "templates")
-    for name, text in BUILT_IN.items():
-        if not (d / f"{name}.md").exists():
-            (d / f"{name}.md").write_text(text, encoding="utf-8")
-    return d
+    return cfg.path("srs", "templates")
 
 
 def _safe(name: str) -> str:
@@ -237,38 +103,37 @@ def get_template(name: str) -> str:
 
 
 def save_template(name: str, text: str) -> str:
-    sections = parse(text)[1]
-    if not sections:
-        raise ValueError("a format needs at least one '## ' section")
+    if not parse(text)[1]:
+        raise ValueError("a format needs headings: each heading is a section to write")
     (_tdir() / f"{_safe(name)}.md").write_text(text, encoding="utf-8")
     return _safe(name)
 
 
 def delete_template(name: str) -> None:
-    if _safe(name) in BUILT_IN:
-        raise ValueError(f"the built-in format '{_safe(name)}' cannot be deleted (edit it instead)")
     (_tdir() / f"{_safe(name)}.md").unlink(missing_ok=True)
 
 
 def parse(text: str) -> tuple[str, list[dict]]:
-    """-> (header text before the first section, [{heading, instructions, body, per_capability}])"""
+    """-> (text before the first section, [{heading, guidance}]). The sections are the headings of the most used
+    level that occurs at least twice (## in most formats, # in a converted Word template); deeper headings stay inside
+    their section as structure to follow."""
     text = re.sub(r"<!--.*?-->\n?", "", text, flags=re.S)
-    header, sections, cur = [], [], None
-    for line in text.splitlines():
-        if line.startswith("## "):
-            cur = {"heading": line[3:].strip(), "instructions": [], "body": []}
-            sections.append(cur)
-        elif cur is None:
-            header.append(line)
-        elif line.startswith(">") and not cur["body"]:
-            cur["instructions"].append(line.lstrip("> ").rstrip())
+    lines = text.splitlines()
+    levels = [len(m.group(1)) for line in lines if (m := re.match(r"(#{1,4})\s+\S", line))]
+    level = next((lv for lv in (2, 1, 3, 4) if levels.count(lv) >= 2), min(levels, default=0))
+    if not level:
+        return text.strip(), []
+    header, sections = [], []
+    for line in lines:
+        m = re.match(r"(#{1,4})\s+(.*)", line)
+        if m and len(m.group(1)) == level:
+            sections.append({"heading": m.group(2).strip(), "guidance": []})
+        elif sections:
+            sections[-1]["guidance"].append(line)
         else:
-            cur["body"].append(line)
+            header.append(line)
     for s in sections:
-        s["instructions"] = " ".join(x for x in s["instructions"] if x)
-        s["per_capability"] = "[per capability]" in s["instructions"].lower()
-        s["instructions"] = re.sub(r"\[per capability\]\s*", "", s["instructions"], flags=re.I)
-        s["body"] = "\n".join(s["body"]).strip()
+        s["guidance"] = "\n".join(s["guidance"]).strip()
     return "\n".join(header).strip(), sections
 
 
@@ -284,7 +149,6 @@ def documents() -> list[dict]:
         m = json.loads(meta.read_text(encoding="utf-8")) if meta.exists() else {}
         out.append({"name": f.stem, "title": m.get("title", f.stem), "created": f.stat().st_mtime,
                     "scope": m.get("scope"), "template": m.get("template"), "model": m.get("model"),
-                    "mode": m.get("mode", "existing"),
                     "chars": f.stat().st_size})
     return out
 
@@ -306,7 +170,7 @@ def _language(topic: str, language: str | None) -> str:
     lang = (language or cfg.get("BRAIN_SRS_LANGUAGE") or "auto").strip()
     if lang.lower() != "auto":
         return lang
-    return {"tr": "Turkish", "en": "English"}.get(qa.analyze(topic)["language"], "English")
+    return {"tr": "Turkish", "en": "English"}.get(qa.analyze(topic[:4000])["language"], "English")
 
 
 def _json(text: str) -> dict:
@@ -318,30 +182,36 @@ def _json(text: str) -> dict:
 
 
 def _number(md: str) -> str:
-    for prefix in ("FR", "BR", "NFR"):
-        counter = iter(range(1, 10000))
-        md = re.sub(rf"\b{prefix}-(?:\?|[0-9X]+|\{{\w*\}})", lambda m: f"{prefix}-{next(counter):03d}", md)
-    return md
+    """FR-? FR-? BR-? -> FR-001 FR-002 BR-001: every prefix the format uses is numbered on its own."""
+    counters: dict[str, int] = {}
+
+    def nxt(m):
+        counters[m.group(1)] = counters.get(m.group(1), 0) + 1
+        return f"{m.group(1)}-{counters[m.group(1)]:03d}"
+    return re.sub(r"\b([A-Z]{1,6})-(?:\?|X+|\{\w*\})", nxt, md)
 
 
 def write(topic: str, set_name: str | None = None, repo_names: list[str] | None = None, template: str | None = None,
-          language: str | None = None, model: str | None = None, title: str | None = None, mode: str = "existing",
+          language: str | None = None, model: str | None = None, title: str | None = None,
           log=lambda *a, **k: None) -> dict:
-    """mode: existing = describe what the code does and the documents say; new = specify something new from the
-    request, with the knowledge base as context."""
-    mode = mode if mode in MODES else "existing"
-    template = template or ("new-feature" if mode == "new" else "default")
-    system = SRS_NEW_SYSTEM if mode == "new" else SRS_SYSTEM
+    """topic: the request, any length: a topic of the current system, system requirements, a new idea, or a mix."""
+    names = templates()
+    if not names:
+        raise ValueError("there is no format yet: add your organisation's format under Requirements > Formats "
+                         "(type it, or load a Word/PDF template)")
+    template = template or names[0]
+    header, sections = parse(get_template(template))
+    system = f"{ROLE}\n\n{RULES}\n\n{WRITING_RULES}"
     t0 = time.time()
     llm.start_meter()
     deadline = t0 + cfg.get("BRAIN_SRS_TIMEOUT")
     model = model or cfg.model("srs")
     lang = _language(topic, language)
-    header, sections = parse(get_template(template))
     ctx = agents.Context(set_name, repo_names)
     scope_text = ", ".join(p.split("--")[0] for p in ctx.projects) or "documents only"
     errors: list[str] = []
     sources: dict[str, set] = {}
+    request = topic.strip()[:40000]
 
     def remaining() -> float:
         return deadline - time.time()
@@ -356,7 +226,8 @@ def write(topic: str, set_name: str | None = None, repo_names: list[str] | None 
 
     # 1. evidence
     log("collecting evidence: search, architecture of each repository, documents", 0.03)
-    seed = search.search(topic, "all", set_name, repo_names, extra_terms=agents.expand(topic, qa.analyze(topic), "srs", model))
+    seed = search.search(request[:4000], "all", set_name, repo_names,
+                         extra_terms=agents.expand(request[:2000], qa.analyze(request[:4000]), "srs", model))
     note_sources("(overall)", seed)
     arch = []
     for p in ctx.projects[:8]:
@@ -365,82 +236,81 @@ def write(topic: str, set_name: str | None = None, repo_names: list[str] | None 
         except Exception as exc:
             errors.append(f"overview {p}: {exc}")
     evidence = "<architecture>\n" + "\n".join(arch) + "\n</architecture>" if arch else ""
+    outline = "\n".join(f"{i + 1}. {s['heading']}: {' '.join(s['guidance'].split())[:200]}" for i, s in enumerate(sections))
 
     # 2. plan
     log("planning the capabilities", 0.1)
     plan = {}
     try:
-        msg = llm.chat([{"role": "system", "content": PLAN_NEW_SYSTEM if mode == "new" else PLAN_SYSTEM},
+        msg = llm.chat([{"role": "system", "content": PLAN},
                         {"role": "user", "content": f"{ctx.describe()}\n{evidence}\n<knowledge_base>\n{search.render(seed, 12000)}\n"
-                                                    f"</knowledge_base>\n<request>{'New capability requested' if mode == 'new' else 'Topic'}: {topic}\nLanguage: {lang}\n"
-                                                    f"At most {cfg.get('BRAIN_SRS_MAX_CAPABILITIES')} capabilities.</request>"}],
-                       model, timeout=min(remaining(), cfg.get("BRAIN_LLM_TIMEOUT")), max_tokens=2000, temperature=0.1)
+                                                    f"</knowledge_base>\n<format_sections>\n{outline}\n</format_sections>\n"
+                                                    f"<request>\n{request[:30000]}\n</request>\nLanguage: {lang}. At most "
+                                                    f"{cfg.get('BRAIN_SRS_MAX_CAPABILITIES')} capabilities."}],
+                       model, timeout=min(remaining(), cfg.get("BRAIN_LLM_TIMEOUT")), max_tokens=3000, temperature=0.1)
         plan = _json(msg["content"])
     except llm.LLMError as exc:
         errors.append(f"plan: {exc}")
     caps = [c for c in plan.get("capabilities", []) if isinstance(c, dict) and c.get("name")]
-    caps = caps[: cfg.get("BRAIN_SRS_MAX_CAPABILITIES")] or [{"name": topic, "description": topic, "queries": [topic]}]
-    system_name = plan.get("system_name") or topic
+    caps = caps[: cfg.get("BRAIN_SRS_MAX_CAPABILITIES")] or [{"name": request[:80], "description": request[:300],
+                                                             "queries": [request[:300]], "excerpt": request[:3000]}]
+    per_cap = {int(n) - 1 for n in plan.get("per_capability_sections") or [] if str(n).isdigit() and 0 < int(n) <= len(sections)}
+    system_name = plan.get("system_name") or request[:80]
     plan_text = (f"System: {system_name}\nSummary: {plan.get('summary', '')}\nCapabilities:\n"
                  + "\n".join(f"- {c['name']}: {c.get('description', '')}" for c in caps))
     log(f"{len(caps)} capabilities: " + ", ".join(c["name"] for c in caps), 0.15)
 
-    # 3. per-capability sections
+    # 3. the per-capability sections
     cap_texts: dict[str, str] = {}
-    per_cap = [s for s in sections if s["per_capability"]]
-    for i, cap in enumerate(caps):
-        if remaining() < 60:
-            errors.append("time budget (BRAIN_SRS_TIMEOUT) reached; remaining capabilities skipped")
-            break
-        log(f"writing capability {i + 1}/{len(caps)}: {cap['name']}", 0.15 + 0.6 * i / len(caps))
-        q = " ".join([cap["name"], cap.get("description", "")] + list(cap.get("queries") or [])[:3])[:600]
-        r = search.search(q, "all", set_name, repo_names)
-        note_sources(cap["name"], r)
-        instr = " ".join(s["instructions"] for s in per_cap) or "Functional requirements for this capability."
-        res = agents.run_agent("srs", system,
-                               f"<plan>\n{plan_text}\n</plan>\n<task>Write the part for the capability "
-                               f"\"{cap['name']}\" ({cap.get('description', '')}). Section instructions: {instr}\n"
-                               f"Start with a line '### {cap['name']}'. Language: {lang}.</task>",
-                               ctx, r, model=model, limits=limits())
-        errors += [e for e in res["errors"] if e not in errors]
-        cap_texts[cap["name"]] = res["output"] or f"### {cap['name']}\n\n_(not written: {'; '.join(res['errors'][-1:])})_"
-
-    # 4. other sections
+    guidance = "\n\n".join(f"### {sections[i]['heading']}\n{sections[i]['guidance']}" for i in sorted(per_cap))
+    if per_cap:
+        for i, cap in enumerate(caps):
+            if remaining() < 60:
+                errors.append("time budget (BRAIN_SRS_TIMEOUT) reached; remaining capabilities skipped")
+                break
+            log(f"writing capability {i + 1}/{len(caps)}: {cap['name']}", 0.15 + 0.6 * i / len(caps))
+            q = " ".join([cap["name"], cap.get("description", "")] + list(cap.get("queries") or [])[:3])[:600]
+            r = search.search(q, "all", set_name, repo_names)
+            note_sources(cap["name"], r)
+            part = f"\n<request_part>\n{cap.get('excerpt') or ''}\n</request_part>" if cap.get("excerpt") else ""
+            res = agents.run_agent("srs", system,
+                                   f"<plan>\n{plan_text}\n</plan>{part}\n<format_guidance>\n{guidance}\n</format_guidance>\n"
+                                   f"<task>Write the part for the capability \"{cap['name']}\" ({cap.get('description', '')}) "
+                                   f"following the format guidance. Start with a line '### {cap['name']}'. "
+                                   f"Language: {lang}.</task>", ctx, r, model=model, limits=limits())
+            errors += [e for e in res["errors"] if e not in errors]
+            cap_texts[cap["name"]] = res["output"] or f"### {cap['name']}\n\n_(not written: {'; '.join(res['errors'][-1:])})_"
     written = "\n\n".join(cap_texts.values())
+
+    # 4. the other sections
     body: list[str] = []
-    others = [s for s in sections if not s["per_capability"]]
-    for s in sections:
-        if s["per_capability"]:
-            body.append(f"## {s['heading']}\n\n" + (s["body"] + "\n\n" if s["body"] else "") + written)
-            continue
-        if not s["instructions"]:
-            body.append(f"## {s['heading']}\n\n{s['body']}")
+    others = [i for i in range(len(sections)) if i not in per_cap]
+    for i, s in enumerate(sections):
+        if i in per_cap:
+            body.append(f"## {s['heading']}\n\n" + written)
             continue
         if remaining() < 30:
             body.append(f"## {s['heading']}\n\n_(not written: time budget reached)_")
             continue
-        log(f"writing section: {s['heading']}", 0.75 + 0.2 * others.index(s) / max(1, len(others)))
+        log(f"writing section: {s['heading']}", 0.75 + 0.2 * others.index(i) / max(1, len(others)))
+        req = f"<request>\n{request[:20000]}\n</request>\n"
         res = agents.run_agent("srs", system,
-                               f"<plan>\n{plan_text}\n</plan>\n<capability_requirements>\n{written[:14000]}\n"
+                               f"<plan>\n{plan_text}\n</plan>\n{req}<capability_requirements>\n{written[:14000]}\n"
                                f"</capability_requirements>\n<glossary_candidates>{json.dumps(plan.get('glossary', []), ensure_ascii=False)}"
-                               f"</glossary_candidates>\n<task>Write ONLY the body of the section \"{s['heading']}\" "
-                               f"(no heading line). Instructions: {s['instructions']}\nStay consistent with the capability "
+                               f"</glossary_candidates>\n<format_section heading=\"{s['heading']}\">\n{s['guidance']}\n"
+                               f"</format_section>\n<task>Write ONLY the body of the section \"{s['heading']}\" (no heading "
+                               f"line), following the format section's guidance and staying consistent with the capability "
                                f"requirements. Language: {lang}.</task>",
                                ctx, seed, evidence, model=model, limits=limits(), tools=False)
         errors += [e for e in res["errors"] if e not in errors]
-        body.append(f"## {s['heading']}\n\n" + (s["body"] + "\n\n" if s["body"] else "")
-                    + (res["output"] or "_(not written)_"))
+        body.append(f"## {s['heading']}\n\n" + (res["output"] or "_(not written)_"))
 
     # 5. assemble
     title = title or system_name
     fill = {"title": title, "date": dt.date.today().isoformat(), "scope": scope_text, "language": lang}
-    head = re.sub(r"\{\{(\w+)\}\}", lambda m: fill.get(m.group(1), m.group(0)), header)
-    trace = (["## Appendix - Related existing system (for the technical team)",
-              "The existing code and documents each new capability touches or must stay consistent with. The body "
-              "of the document is written for non-technical readers."] if mode == "new" else
-             ["## Appendix - Traceability (for the technical team)",
-              "Where the requirements of each capability were found. The body of the document is written for "
-              "non-technical readers; these references let developers and testers verify it."])
+    head = re.sub(r"\{\{(\w+)\}\}", lambda m: fill.get(m.group(1), m.group(0)), header) or f"# {title}"
+    trace = ["## Appendix - Where it comes from (for the technical team)",
+             "The code and documents behind each capability: the current situation the requirements were checked against."]
     for cap, refs in sources.items():
         if refs:
             trace.append(f"- **{cap}**: " + ", ".join(sorted(refs)[:12]))
@@ -448,8 +318,8 @@ def write(topic: str, set_name: str | None = None, repo_names: list[str] | None 
     md = re.sub(r"\{\{(\w+)\}\}", lambda m: fill.get(m.group(1), m.group(0)), md)
     name = f"{dt.datetime.now():%Y%m%d-%H%M}-" + (re.sub(r"[^\w]+", "-", title.lower()).strip("-")[:50] or "srs")
     (_odir() / f"{name}.md").write_text(md, encoding="utf-8")
-    meta = {"title": title, "topic": topic, "mode": mode, "scope": scope_text, "template": template, "language": lang,
-            "model": model, "capabilities": [c["name"] for c in caps], "errors": errors,
+    meta = {"title": title, "topic": request[:500], "scope": scope_text, "template": template,
+            "language": lang, "model": model, "capabilities": [c["name"] for c in caps], "errors": errors,
             "usage": llm.read_meter(), "seconds": round(time.time() - t0, 1)}
     (_odir() / f"{name}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
     log("done", 1.0)

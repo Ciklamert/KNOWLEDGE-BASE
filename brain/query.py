@@ -13,7 +13,7 @@ For every prompt AI-BRAIN first:
 
 The result drives everything after it:
   * code search: BM25 query = ranked key terms + variants; semantic query = ranked key terms;
-  * document search: LightRAG high-level keywords = concepts, low-level keywords = key terms + identifiers;
+  * document search: keywords = key terms + variants, concepts = multi-word themes (matched against concept names);
   * ask / enhance: the model is told the language, the key terms (most important first) and what was ignored.
 """
 from __future__ import annotations

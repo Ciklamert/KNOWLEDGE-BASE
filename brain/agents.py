@@ -43,7 +43,8 @@ The knowledge base already combined three sources for you: the code graph (symbo
 vector indexes (code by meaning) and the document graph (business entities, rules, passages). Each code hit shows
 where it is, why it matched, its signature and its callers/callees. If that answers the request, do not call tools.
 Otherwise pick the cheapest tool that answers the next question:
-- one symbol's source, callers and callees: `symbol`; call chains for impact: `trace`;
+- one symbol's source, callers and callees: `symbol`; call chains: `trace`; what a change breaks and which
+  tests to run: `impact` (files or symbols);
 - a file: `outline` first (declarations with line ranges), then `read` only the lines you need;
 - exact text or regex: `grep` (mode=files to only locate); file paths by glob: `files`;
 - new concepts: `search` (detail=brief to scan widely), `semantic` (code by meaning), `docs` (documents only);
@@ -69,7 +70,7 @@ Use Markdown. No preamble, no repetition of the question, no generic advice.
 </answer_format>"""
 
 ENHANCE_SYSTEM = f"""You are the AI-BRAIN prompt enhancer: a staff engineer who prepares work for an AI coding agent
-(Claude Code, opencode, pi, Copilot ...). Turn the developer's short request into a precise, self-contained,
+(Claude Code, opencode, pi, Copilot ...). Turn the developer's request, of any kind, into a precise, self-contained,
 implementation-ready prompt grounded in this organisation's code graph and document graph, so the coding agent
 can start working without exploring blindly.
 
@@ -78,31 +79,46 @@ can start working without exploring blindly.
 {TOOL_GUIDE}
 
 <method>
-1. Classify the intent: feature, bug fix, refactor, test, investigation, documentation or question.
-2. Locate the exact code: entry points (routes, handlers, jobs), the symbols to change, their callers (impact),
-   data models, configuration, existing tests to extend, and similar existing code to imitate.
-3. Collect the business rules and constraints from documents that the change must respect.
-4. Keep the plan minimal: the smallest change that satisfies the request; no unrequested refactors.
-5. If the request is ambiguous, do not guess silently: choose the most likely interpretation, state it as an
-   assumption, and list the open question.
+1. Classify the request: bug fix, new feature, change to existing behaviour, refactor, performance, security,
+   tests, migration or upgrade, configuration or operations, investigation, documentation, or question. A request
+   can have two classes (e.g. a new feature that also fixes a bug): name both.
+2. Locate the code it touches. What to look for depends on the class:
+   - bug fix: the failing path from its entry point to the faulty code, the most likely root cause (with the
+     evidence), how to reproduce it, and the tests that should have caught it;
+   - new feature: it does not exist yet, so do not look for it; find where it plugs in (entry points, modules,
+     services, data models to use or extend) and the most similar existing feature to imitate (files, structure,
+     naming, tests);
+   - change, refactor, performance, security, migration: the symbols to change, their callers and dependants (the
+     impact), the behaviour that must stay the same, and how to measure or verify the result;
+   - investigation, documentation, question: what is to be found out or written, and where the answer lives.
+3. Collect the business rules from documents and the conventions from the code (layering, error handling,
+   validation, logging, configuration, tests) that the work must respect.
+4. Keep the plan minimal: the smallest complete change that satisfies the request; no unrequested refactors.
+5. Where the request is ambiguous or silent, choose the most likely interpretation, state it as an assumption, and
+   list the open question.
 </method>
 
 <output_format>
-Output ONLY the enhanced prompt, in Markdown, with exactly these sections (omit a section only if empty):
+Output ONLY the enhanced prompt, in Markdown, with these sections in this order (omit a section that would be empty):
 ## Task
-What to achieve and why, in 1-3 sentences (intent type in brackets, e.g. [bug fix]).
-## Context
-Bullets: `repo/path:line` - symbol - what it does and why it matters (change / read / imitate).
+What to achieve and why, in 1-3 sentences, with the class in brackets, e.g. [bug fix] or [new feature].
+## What exists today
+Bullets: `repo/path:line` - symbol - what it does and why it matters (change / read / imitate / extend).
+## Analysis
+Only what the class needs: bug fix - symptom, reproduction, likely root cause with evidence; new feature - where it
+fits, files to create (following the existing structure and naming), data and interfaces; refactor or change -
+target shape and the behaviour to keep; performance - the hot path and how to measure it; security - the threat and
+the affected inputs; investigation - the questions to answer.
 ## Business rules and constraints
-Bullets with [document name]; conventions visible in the code (error handling, logging, naming).
+Bullets with [document name]; conventions visible in the code.
 ## Impact
 Callers and dependants that may break; interfaces, APIs, database schemas and contracts to keep compatible.
 ## Implementation plan
-Numbered, concrete steps in order, each naming the file/symbol to touch.
+Numbered, concrete steps in order, each naming the file/symbol to create or touch.
 ## Acceptance criteria
-Checkable bullets; tests to add or update (unit/integration), including edge cases and error paths.
+Checkable bullets; tests to add or update (for a bug fix, a test that fails before the fix), edge cases and error paths.
 ## Out of scope
-What the agent must NOT change.
+What the agent must NOT change or build.
 ## Open questions and assumptions
 Only if any.
 ## Notes for the agent
@@ -133,6 +149,8 @@ TOOLS = [
     _fn("trace", "Call chain of a function (who calls it / what it calls).",
         {"function_name": _S, "direction": {"type": "string", "enum": ["inbound", "outbound", "both"]}, "repo": _S},
         ["function_name"]),
+    _fn("impact", "What a change reaches: dependants, entry points, tests to run, business rules.",
+        {"files": {"type": "array", "items": _S}, "symbols": {"type": "array", "items": _S}, "repo": _S}, []),
     _fn("outline", "Declarations of one file with line ranges.", {"path": _S, "repo": _S}, ["path"]),
     _fn("read", "Numbered lines of a file (max 400).", {"path": _S, "start": _I, "end": _I, "repo": _S}, ["path"]),
     _fn("grep", "Exact text or regex in the code; mode=files lists only the files.",
@@ -235,8 +253,10 @@ class Context:
         if name == "trace":
             return code.tool("trace", {"function_name": a["function_name"], "project": self.project(repo),
                                        "direction": a.get("direction") or "both", "depth": int(a.get("depth") or 3)})
-        if name == "snippet":   # kept for callers of the engine's own snippet tool
-            return code.tool("snippet", {"qualified_name": a["qualified_name"], "project": self.project(repo)})
+        if name == "impact":
+            return cap(impact(a.get("files"), a.get("symbols"), None if repo else self.set_name,
+                              [repo] if repo else self.repo_names, self.branch, int(a.get("depth") or 3))["markdown"],
+                       "pass fewer files or symbols")
         if name == "overview":
             args = {"project": self.project(repo), "aspects": a.get("aspects") or ["overview"]}
             if a.get("path"):
@@ -351,6 +371,7 @@ def ask(question: str, set_name=None, repo_names=None, branch=None, model: str |
 def enhance(prompt: str, set_name=None, repo_names=None, branch=None, repo: str | None = None,
             base_commit: str | None = None, changed_files: list[str] | None = None, model: str | None = None,
             log=lambda *a, **k: None) -> dict:
+    """One enhancer for every kind of request (bug fix, new feature, refactor, ...): the model classifies it."""
     t0 = time.time()
     llm.start_meter()
     ctx = Context(set_name, repo_names, branch)
@@ -386,6 +407,68 @@ def fallback_prompt(prompt: str, seed: dict, drift_report: dict | None) -> str:
         out += ["", "## Notes for the agent", drift.render(drift_report)]
     out += ["", "Verify the listed files in your working copy before editing."]
     return "\n".join(out)
+
+
+def impact(files: list[str] | None = None, symbols: list[str] | None = None, set_name=None, repo_names=None,
+           branch=None, depth: int = 3) -> dict:
+    """Blast radius of a change, without a model call: per repository in scope the changed symbols, what depends on
+    them, the entry points (routes) that reach them and the tests to run; plus the document passages (business
+    rules) that name the changed code."""
+    if not files and not symbols:
+        raise ValueError("pass changed files or symbols")
+    ctx = Context(set_name, repo_names, branch)
+    code, repos_out, errors = providers.code(), [], []
+    for p in ctx.projects:
+        try:
+            r = code.impact(p, files, symbols, depth)
+        except (KeyError, ValueError) as exc:
+            errors.append(f"{p}: {exc}")
+            continue
+        if r["changed"]:
+            repos_out.append(r)
+    names = list(dict.fromkeys(c["symbol"].rsplit(".", 1)[-1] for r in repos_out for c in r["changed"]))[:12]
+    rules = []
+    if names:
+        try:
+            d = providers.docs().search(" ".join(names), names, 4, 4, [])
+            rules = [{"source": c["source"], "text": " ".join(c["content"].split())[:300]}
+                     for c in d.get("chunks", []) if c.get("matched")]
+        except Exception as exc:
+            errors.append(f"documents: {exc}")
+    out = {"repos": repos_out, "rules": rules, "errors": errors}
+    out["markdown"] = render_impact(out)
+    return out
+
+
+def render_impact(r: dict, limit: int = 25) -> str:
+    if not r["repos"]:
+        return "No indexed symbol matches these files or names (check the paths, or the repository with repo=...)."
+    lines = []
+    for x in r["repos"]:
+        p = x["project"]
+        lines.append(f"### Impact in {p}")
+        lines.append("changed: " + ", ".join(f"`{c['symbol']}` ({c['path']}:{c['line']})" for c in x["changed"][:limit]))
+        if x["affected"]:
+            lines.append(f"depends on it ({len(x['affected'])}):")
+            lines += [f"- `{a['symbol']}` {a['path']}:{a['line']} (via `{a.get('via', '')}`, {a['depth']} hop"
+                      f"{'s' if a['depth'] > 1 else ''})" for a in x["affected"][:limit]]
+        else:
+            lines.append("depends on it: nothing in the graph (dynamic calls, reflection and other repositories are not seen)")
+        handlers = {e["handler"] for e in x["entry_points"]["routes"]}
+        entry = [f"route `{e['route']}` (handler `{e['handler']}`)" for e in x["entry_points"]["routes"]]
+        entry += [f"`{t['symbol']}` ({t['path']})" for t in x["entry_points"]["top_callers"] if t["symbol"] not in handlers]
+        if entry:
+            lines.append("entry points: " + "; ".join(entry[:limit]))
+        if x["tests"]:
+            lines.append(f"tests to run ({len(x['tests'])} in {len(x['test_files'])} file(s)): "
+                         + ", ".join(f"`{t['path']}::{t['symbol'].rsplit('.', 1)[-1]}`" for t in x["tests"][:limit]))
+        else:
+            lines.append("tests to run: none found in the graph; add one for the changed behaviour")
+    if r["rules"]:
+        lines.append("### Business rules that name this code")
+        lines += [f"- **{c['source']}**: {c['text']}" for c in r["rules"]]
+    lines.append("_A graph edge is not proof that a change is safe: run the tests and read the callers that matter._")
+    return "\n".join(lines)
 
 
 GUIDE_SYSTEM = f"""You are the AI-BRAIN project guide: a senior engineer who helps a newcomer understand a codebase

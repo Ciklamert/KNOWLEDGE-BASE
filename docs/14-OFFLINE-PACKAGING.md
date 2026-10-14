@@ -7,9 +7,8 @@ The folder is complete: nothing is downloaded during setup or at run time. Copy 
 
 | Part | Shipped as |
 |---|---|
-| Every Python package for **Python 3.13** on **Windows x64 and Linux x86-64** | `wheels/` (178 wheel files, about 225 MB) |
+| Every Python package for **Python 3.13** on **Windows x64 and Linux x86-64** | `wheels/` (41 wheel files, about 80 MB): 11 direct packages and their dependencies |
 | Code engine: codebase-memory-mcp 0.11.0, including its code-embedding model | `bin/codebase-memory-mcp-windows-amd64.zip`, `bin/codebase-memory-mcp-linux-amd64-portable.tar.gz`, `bin/SHA256SUMS` |
-| Tokenizer files LightRAG needs (tiktoken) | `vendor/tiktoken_cache/`; `TIKTOKEN_CACHE_DIR` points there automatically |
 | Graph library for the UI | `brain/ui/vendor/force-graph.min.js` (MIT, v1.52.0) |
 | Not included: Python 3.13 and git | install them from the organisation's software distribution |
 
@@ -19,12 +18,12 @@ The folder is complete: nothing is downloaded during setup or at run time. Copy 
   use only the folder.
 - Setup checks the SHA-256 of the code engine archive against `bin/SHA256SUMS` before unpacking it to
   `bin/windows/` or `bin/linux/`.
-- At run time LightRAG finds its tokenizer files in `vendor/`, never downloads remote images from documents, and
-  the UI loads no files from the internet.
+- At run time nothing is downloaded: no tokenizer or model files, no remote images from documents, and the UI loads
+  no files from the internet.
 
 ## 3. Why only Python 3.13
-One interpreter version means one tested set of packages, a 225 MB bundle (wheels for five versions would be about
-1 GB) and no preparation step on an internet machine. Setup looks for Python 3.13 (`-Python` / `--python`, then
+One interpreter version means one tested set of packages, an 80 MB bundle (wheels for five versions would be five
+times as much) and no preparation step on an internet machine. Setup looks for Python 3.13 (`-Python` / `--python`, then
 `py -3.13`, `python3.13`, `python`, `python3`), stops with a clear message if it is missing, and recreates `.venv` if
 it was built with another version. `brain.py` refuses to run on any other version. See
 [ADR-011](decisions/ADR-011-python-version.md).

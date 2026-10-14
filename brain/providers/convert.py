@@ -1,23 +1,20 @@
-"""Turn EVERY document into Markdown before it goes to LightRAG (``to_markdown``), following the idea of Microsoft's
-MarkItDown: one entry point, a registry of small converters, each deciding by file extension AND by the content
-itself (magic numbers, zip contents, text shape), tried in order with a fallback to the next converter and finally
-to plain text, and an output that keeps the document's structure (headings, lists, tables, links, code) while
-spending as few tokens as possible (no page furniture, no repeated page headers and footers, no blank-line runs).
+"""Turn EVERY document into Markdown before it is indexed (``convert``), following the idea of Microsoft's MarkItDown:
+one entry point, a registry of small converters, each deciding by file extension AND by the content itself (magic
+numbers, zip contents, text shape), tried in order with a fallback to the next converter and finally to plain text,
+and an output that keeps the document's structure (headings, lists, tables, links, code, page numbers) while spending
+as few tokens as possible (no page furniture, no repeated page headers and footers, no blank-line runs).
 
 Formats: PDF, Word, PowerPoint, Excel, HTML, CSV/TSV, JSON, XML, RSS/Atom feeds, Jupyter notebooks, EPUB e-books,
 e-mails (.eml, with their attachments), zip archives (every file inside), images (with their metadata), source code,
 configuration and text files. A file with a wrong or missing extension is recognised by its content.
 
-Differences from MarkItDown, on purpose: tables stay HTML, because LightRAG's native engine analyses HTML tables as
-tables; pictures are kept as image files in a ``.textpack`` (Markdown + images) for the vision model instead of being
-captioned during conversion; everything is model-free and uses only packages already bundled (pdfplumber, pypdfium2,
-python-docx, python-pptx, openpyxl, Pillow and the standard library).
-
-The converted Markdown is also kept in data/converted/ and can be previewed in the UI.
+Pictures (embedded images, scanned pages, pages with drawn charts) are kept as image files next to the Markdown
+(``Pack.assets``); the document engine describes them with the vision model after the text is searchable. Everything
+is model-free and uses only bundled packages (pdfplumber, pypdfium2, python-docx, python-pptx, openpyxl, Pillow and
+the standard library).
 """
 import base64
 import hashlib
-import html
 import io
 import json
 import re
@@ -27,13 +24,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-MIN_IMG_PX = 64          # LightRAG skips smaller images anyway (VLM_MIN_IMAGE_PIXEL)
+MIN_IMG_PX = 64          # smaller pictures (icons, bullets) carry no information
 MAX_SHEET_ROWS = 2000
 MAX_SHEET_COLS = 40
 
 
 class Pack:
-    """Collects markdown + assets, writes a .textpack zip."""
+    """A converted document: Markdown lines plus the pictures it refers to (assets/<hash>.<ext>)."""
 
     def __init__(self, title: str):
         self.md = [f"# {title}", ""]
@@ -49,24 +46,21 @@ class Pack:
         self.assets[name] = data
         self.md += [f"![{alt}]({name})", ""]
 
-    def build(self) -> bytes:
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("text.md", "\n".join(self.md))
-            for name, data in self.assets.items():
-                z.writestr(name, data)
-        return buf.getvalue()
+    @property
+    def text(self) -> str:
+        return "\n".join(self.md)
 
 
-def html_table(rows: list[list]) -> str:
-    rows = [[("" if c is None else " ".join(str(c).split())) for c in r] for r in rows if r and any(c not in (None, "") for c in r)]
+def md_table(rows: list[list]) -> str:
+    """A Markdown pipe table; the first row is the header. Cells are kept on one line, pipes escaped."""
+    rows = [[("" if c is None else " ".join(str(c).split()).replace("|", "\\|")) for c in r]
+            for r in rows if r and any(c not in (None, "") for c in r)]
     if not rows:
         return ""
     width = max(len(r) for r in rows)
     rows = [r + [""] * (width - len(r)) for r in rows]
-    head = "".join(f"<th>{html.escape(c)}</th>" for c in rows[0])
-    body = "".join("<tr>" + "".join(f"<td>{html.escape(c)}</td>" for c in r) + "</tr>" for r in rows[1:])
-    return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+    line = lambda r: "| " + " | ".join(r) + " |"
+    return "\n".join([line(rows[0]), "|" + "---|" * width] + [line(r) for r in rows[1:]])
 
 
 def _png(img) -> bytes:
@@ -97,6 +91,7 @@ def pdf(data: bytes, title: str) -> "Pack":
 
         edges: list[set[str]] = []   # normalised first and last lines of each page (headers / footers)
         for pno, page in enumerate(pdfp.pages):
+            pack.md += [f"<!-- page {pno + 1} -->"]   # page numbers for citations (hidden in Markdown views)
             scale = 2.0
             rendered = None
 
@@ -108,7 +103,6 @@ def pdf(data: bytes, title: str) -> "Pack":
 
             text_chars = [c for c in page.chars if c.get("text", "").strip()]
             if len(text_chars) < 20:  # scanned page / pure figure: let the vision model read it
-                pack.md += [f"## Page {pno + 1}", ""]
                 pack.add_image(_jpg(render()), "jpg", f"Page {pno + 1} of {title} (scanned or graphic page)")
                 continue
 
@@ -116,7 +110,7 @@ def pdf(data: bytes, title: str) -> "Pack":
             tables = page.find_tables()
             tboxes = [t.bbox for t in tables]
             for t in tables:
-                h = html_table(t.extract())
+                h = md_table(t.extract())
                 if h:
                     blocks.append((t.bbox[1], "table", h))
 
@@ -219,14 +213,14 @@ def pptx(data: bytes, title: str) -> "Pack":
                         pack.md.append(("  " * p.level) + "- " + t)
                 pack.md.append("")
             elif getattr(sh, "has_table", False) and sh.has_table:
-                pack.md += [html_table([[c.text for c in r.cells] for r in sh.table.rows]), ""]
+                pack.md += [md_table([[c.text for c in r.cells] for r in sh.table.rows]), ""]
             elif getattr(sh, "has_chart", False) and sh.has_chart:
                 ch = sh.chart
                 try:
                     cats = list(ch.plots[0].categories)
                     rows = [["series", *map(str, cats)]] + [[s.name, *s.values] for s in ch.plots[0].series]
                     pack.md += [f"Chart: {ch.chart_title.text_frame.text if ch.has_title else 'untitled'}", "",
-                                html_table(rows), ""]
+                                md_table(rows), ""]
                 except Exception:
                     pass
             elif sh.shape_type == MSO_SHAPE_TYPE.PICTURE:
@@ -255,10 +249,7 @@ def xlsx(data: bytes, title: str) -> "Pack":
         if not rows:
             continue
         pack.md += [f"## Sheet: {ws.title}", ""]
-        # split very long sheets into tables of 200 rows (header repeated) so each stays analysable
-        header, rest = rows[0], rows[1:] or []
-        for i in range(0, max(len(rest), 1), 200):
-            pack.md += [html_table([header] + rest[i:i + 200]), ""]
+        pack.md += [md_table(rows), ""]
         if ws.max_row and ws.max_row > MAX_SHEET_ROWS:
             pack.md += [f"(sheet truncated: first {MAX_SHEET_ROWS} of {ws.max_row} rows)", ""]
     return pack
@@ -320,7 +311,7 @@ def docx(data: bytes, title: str) -> "Pack":
         elif tag == "tbl":
             end_list()
             t = Table(block, doc)
-            pack.md += [html_table([[c.text for c in row.cells] for row in t.rows]), ""]
+            pack.md += [md_table([[c.text for c in row.cells] for row in t.rows]), ""]
     return pack
 
 
@@ -412,7 +403,7 @@ class _Html2Md:
                 self.table[-1].append(" ".join("".join(self.buf).split()))
             self.buf = []
         elif tag == "table" and self.table is not None:
-            self.out += [html_table(self.table), ""]
+            self.out += [md_table(self.table), ""]
             self.table = None
         elif re.fullmatch(r"h[1-6]", tag):
             self.flush("#" * int(tag[1]) + " ")
@@ -483,9 +474,7 @@ def csv_md(data: bytes, title: str, delimiter: str) -> "Pack":
     pack = Pack(title)
     rows = list(csv.reader(io.StringIO(_decode(data)), delimiter=delimiter))[:MAX_SHEET_ROWS]
     if rows:
-        header, rest = rows[0], rows[1:]
-        for i in range(0, max(len(rest), 1), 200):
-            pack.md += [html_table([header] + rest[i:i + 200]), ""]
+        pack.md += [md_table(rows), ""]
     return pack
 
 
@@ -755,17 +744,3 @@ def convert(filename: str, data: bytes, depth: int = 0) -> "Pack":
             errors.append(f"{c.name}: {type(exc).__name__}: {str(exc)[:120]}")
     raise ValueError(f"{filename}: cannot convert ({kind} content; " + ("; ".join(errors) or "unsupported format")
                      + f"). Supported: {', '.join(SUPPORTED)}")
-
-
-def to_markdown(filename: str, data: bytes) -> tuple[str, bytes, str]:
-    """EVERY document becomes Markdown before it reaches LightRAG.
-    Returns (stored file name, payload, markdown text): `<file>.md` when the document has no images, else
-    `<file>.textpack` (Markdown + image files, read by LightRAG's native engine; images go to the vision model)."""
-    ext = Path(filename).suffix.lower()
-    pack = convert(filename, data)
-    md = "\n".join(pack.md)
-    if pack.assets:
-        return f"{filename}.textpack", pack.build(), md
-    if ext in (".md", ".markdown"):
-        return (filename if ext == ".md" else f"{filename}.md"), md.encode("utf-8"), md
-    return f"{filename}.md", md.encode("utf-8"), md

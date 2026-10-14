@@ -75,7 +75,8 @@ def main():
     check("first sync finished, repositories indexed", all(r["indexed"] for r in c.get("/api/repos").json()["repos"]))
 
     # ---- documents
-    note = "# Ödeme Kuralları\nRefunds above 5000 TL need manager approval (iade onayı). The RefundPolicy applies to all channels."
+    note = ("# Ödeme Kuralları\nRefunds above 5000 TL need manager approval (iade onayı). The RefundPolicy applies to all "
+            "channels.\n\nThe Payment Gateway retries a failed charge.")
     r = ui.post("/api/docs/upload", files={"files": ("refund-policy.md", note.encode("utf-8"), "text/markdown")})
     j = wait_job(ui, r.json()["job"])
     check("document upload job", j["state"] == "done", j.get("error"))
@@ -87,17 +88,59 @@ def main():
         if doc and doc["status"] in ("processed", "failed"):
             break
         time.sleep(2)
-    check("document processed by LightRAG", doc and doc["status"] == "processed", doc)
+    check("document indexed by the document engine", doc and doc["status"] == "processed" and doc["chunks"] >= 1, doc)
+    end = time.time() + 60
+    while time.time() < end and not (doc := next(d for d in ui.get("/api/docs").json()["documents"] if d["name"] == doc["name"]))["vectors"]:
+        time.sleep(1)
+    check("passage vectors built in the background", doc["vectors"] == doc["chunks"], doc)
+    from PIL import Image
+    import io as _io
+    png = _io.BytesIO()
+    Image.new("RGB", (320, 200), "white").save(png, "PNG")
+    r = ui.post("/api/docs/upload", files={"files": ("refund-chart.png", png.getvalue(), "image/png")})
+    wait_job(ui, r.json()["job"])
+    end = time.time() + 60
+    while time.time() < end:
+        pic = next((d for d in ui.get("/api/docs").json()["documents"] if d["name"] == "refund-chart.png"), {})
+        if pic.get("described"):
+            break
+        time.sleep(1)
+    check("pictures described by the vision model after indexing", pic.get("pictures") == 1 and pic.get("described") == 1, pic)
+    r = c.post("/api/search", json={"query": "İade Grafiği monthly refunds", "scope": "docs"}).json()
+    check("a described picture is searchable", any("refund-chart" in ch["source"] for ch in r["docs"].get("chunks", [])),
+          [ch["source"] for ch in r["docs"].get("chunks", [])])
+    g = c.get("/api/docs/graph", params={"label": "*"}).json()
+    check("document graph: documents and concepts", any(n["kind"] == "document" for n in g["nodes"]) and len(g["nodes"]) > 1,
+          [n["name"] for n in g["nodes"]][:8])
+    r = c.post("/api/convert", files={"file": ("rules.csv", b"Kod,Anlam\n503,Banka yanit vermiyor\n", "text/csv")}).json()
+    check("convert a file to Markdown without indexing it", "| Kod | Anlam |" in r.get("markdown", ""), r)
+    with c.stream("GET", "/api/events", timeout=10) as ev:
+        first = next(ev.iter_lines())
+    check("live events stream", first.startswith("data: "), first)
     r = c.get("/api/docs/markdown", params={"name": "refund-policy.md"})
     check("converted Markdown kept for preview", r.status_code == 200 and "Ödeme" in r.json()["markdown"], r.text[:120])
 
     # ---- search (no LLM)
     r = c.post("/api/search", json={"query": "charge customer invoice KDV"}).json()
     check("search finds code", len(r["code"]) > 0, [h["name"] for h in r["code"][:5]])
-    check("search pipeline: analysis + semantic re-rank", "semantic re-rank" in r.get("pipeline", [])
-          and all("similarity" in h for h in r["code"]), r.get("pipeline"))
+    check("search pipeline: re-rank with the stored code vectors (no extra API call)",
+          "semantic re-rank (stored code vectors)" in r.get("pipeline", []) and all("similarity" in h for h in r["code"]),
+          r.get("pipeline"))
     r = c.post("/api/search", json={"query": "refund manager approval RefundPolicy"}).json()
     check("search finds documents", len(r["docs"].get("chunks", [])) > 0, r["errors"])
+    rules = r["docs"].get("rules", [])
+    check("business rules with their limits, found without a model",
+          any(x["modality"] == "obligation" and any("5000 TL" in l for l in x["limits"]) for x in rules), rules)
+    check("documents list their rules", (next(d for d in ui.get("/api/docs").json()["documents"]
+                                               if d["name"].startswith("refund-policy")).get("rules") or 0) >= 1)
+    # the mock's word-count embeddings give lower similarities than a real model: a lower threshold for this check
+    ui.put("/api/settings", json={"changes": {"BRAIN_CONCEPT_CODE_SIM": "0.3"}})
+    r = c.post("/api/search", json={"query": "payment gateway retries", "scope": "all"}).json()
+    linked = {e["name"]: e["implemented_by"] for e in r["docs"].get("entities", []) if e.get("implemented_by")}
+    check("a document concept is linked to the code that implements it (by meaning, no API call)",
+          any("PaymentGateway" in x for x in linked.get("Payment Gateway", []))
+          and any(p.startswith("concept -> code") for p in r["pipeline"]), (linked, r["pipeline"]))
+    ui.put("/api/settings", json={"changes": {"BRAIN_CONCEPT_CODE_SIM": "0.5"}})
     r = c.post("/api/search", json={"query": "iade onayı refund", "scope": "docs"}).json()
     check("Turkish document search", any("refund" in ch["source"] for ch in r["docs"].get("chunks", [])),
           [ch["source"] for ch in r["docs"].get("chunks", [])])
@@ -110,8 +153,11 @@ def main():
     check("ask agent used tools", len(r["steps"]) > 0, r["steps"])
     check("ask: model-expanded search terms", "refund_payment" in r["analysis"].get("expanded", [])
           or "chargeCustomer" in r["analysis"].get("expanded", []), r["analysis"].get("expanded"))
-    r = c.post("/api/enhance", json={"prompt": "add a refund feature to billing"}).json()
-    check("enhance agent returns a prompt", "##" in r["enhanced"], r["enhanced"][:120])
+    r = c.post("/api/enhance", json={"prompt": "customers can pay invoices in instalments"}).json()
+    check("enhance a new feature (what exists today)", "[new feature]" in r["enhanced"] and "## What exists today" in r["enhanced"],
+          r["enhanced"][:160])
+    r = c.post("/api/enhance", json={"prompt": "refunds over 1000 fail with a timeout"}).json()
+    check("enhance a bug fix with the same enhancer", "[bug fix]" in r["enhanced"], r["enhanced"][:160])
     r = ui.post("/api/ask", json={"question": "Müşteriden nasıl ödeme alınır?", "async": True}).json()
     j = wait_job(ui, r["job"])
     check("async ask job with progress steps", j["state"] == "done" and len(j["steps"]) >= 2, j.get("error"))
@@ -123,7 +169,8 @@ def main():
                              "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t"}}}).json()
     check("MCP initialize", r["result"]["serverInfo"]["name"] == "ai-brain")
     tools = [t["name"] for t in m.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"}).json()["result"]["tools"]]
-    check("MCP tools/list", {"search", "ask", "enhance_prompt", "check_branch"} <= set(tools), tools)
+    check("MCP tools/list", {"search", "ask", "enhance_prompt", "check_branch", "impact", "remember", "recall"} <= set(tools)
+          and "add_note" not in tools, tools)
     r = m.post("/mcp", json={"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                              "params": {"name": "search", "arguments": {"query": "apply vat"}}}).json()
     check("MCP tools/call search", not r["result"]["isError"] and "apply_vat" in r["result"]["content"][0]["text"],
@@ -148,6 +195,32 @@ def main():
     check("MCP read (read replacement)", not err and "InvoiceService" in text and "lines 1-12" in text, text[:200])
     text, err = mcp_call("grep", {"pattern": "apply_vat", "repos": [a.repo]})
     check("MCP grep (grep replacement)", not err and "apply_vat" in text, text[:200])
+    # ---- impact of a change (no model call)
+    r = c.post("/api/impact", json={"files": ["src/billing/tax.py"], "target": f"repo:{a.repo}"}).json()
+    rep = (r.get("repos") or [{}])[0]
+    check("impact: changed symbols and the code that depends on them",
+          any(x["symbol"].endswith("apply_vat") for x in rep.get("changed", []))
+          and any(x["symbol"].endswith("create_invoice") for x in rep.get("affected", [])), r.get("markdown", "")[:400])
+    text, err = mcp_call("impact", {"symbols": ["apply_vat"], "repo": a.repo})
+    check("MCP impact names dependants and tests to run", not err and "create_invoice" in text and "tests to run" in text, text[:300])
+    check("impact without files or symbols is refused", c.post("/api/impact", json={}).status_code == 400)
+
+    # ---- decision memory
+    r = ui.post("/api/memory", json={"type": "gotcha", "title": "VAT rounding", "text": "KDV is rounded per line, not per invoice.",
+                                     "repo": a.repo, "paths": ["src/billing/tax.py"]})
+    check("memory recorded", r.status_code == 200 and not r.json()["replaced"], r.text[:200])
+    text, err = mcp_call("remember", {"type": "gotcha", "title": "VAT rounding",
+                                      "text": "KDV is rounded per invoice since 2026-10.", "repo": a.repo, "paths": ["src/billing/tax.py"]})
+    check("memory replaced by topic (MCP remember)", not err and text.startswith("replaced"), text)
+    text, err = mcp_call("recall", {"query": "KDV rounding"})
+    check("MCP recall finds it, newest text", not err and "per invoice since 2026-10" in text and "per line" not in text, text[:300])
+    r = c.post("/api/search", json={"query": "KDV rounded per invoice", "scope": "docs"}).json()
+    check("a memory is searchable like a document", any(ch["doc"].startswith("memory-gotcha-vat-rounding") for ch in r["docs"].get("chunks", [])),
+          [ch["doc"] for ch in r["docs"].get("chunks", [])])
+    mem = c.get("/api/memory").json()["memories"]
+    check("memory listed", len(mem) == 1 and mem[0]["stale"] == [], mem)
+    check("memory forgotten", ui.delete(f"/api/memory/{mem[0]['name']}").status_code == 200 and c.get("/api/memory").json()["memories"] == [])
+
     r = c.get("/api/code/files", params={"pattern": "*.ts", "target": f"repo:{a.repo}"}).json()
     check("REST files", any(f.endswith("api.ts") for f in r["files"]), r)
 
@@ -203,21 +276,26 @@ def main():
     r = c.post("/api/search", json={"query": "müşteriden ödeme alma", "scope": "semantic", "target": "set:all"}).json()
     check("semantic code search (vector indexes)", len(r["code"]) > 0 and "multilingual code vector index" in r["pipeline"],
           (r["pipeline"], r["errors"]))
-    check("formats listed", "default" in c.get("/api/srs/templates").json()["templates"])
-    r = ui.post("/api/srs", json={"topic": "billing and payments", "target": "set:payments"}).json()
+    check("no format until the user adds one", c.get("/api/srs/templates").json()["templates"] == [])
+    fmt = ("# Yazılım Gereksinimleri - {{title}}\n## 1. Amaç\nSistemin amacı.\n## 2. İşlevsel gereksinimler\n"
+           "Her yetenek için REQ-? maddeleri.\n## 3. Sözlük\nTerimler.")
+    r = ui.put("/api/srs/templates/company", json={"text": fmt})
+    check("the user's format saved", r.status_code == 200 and c.get("/api/srs/templates").json()["templates"] == ["company"], r.text)
+    r = ui.post("/api/srs", json={"topic": "billing and payments", "target": "set:payments", "template": "company"}).json()
     j = wait_job(ui, r["job"], 600)
     res = j.get("result") or {}
-    check("requirements specification written", j["state"] == "done" and "FR-001" in res.get("markdown", "")
-          and "Traceability" in res.get("markdown", ""), (j.get("error"), res.get("errors")))
+    md = res.get("markdown", "")
+    check("requirements written in the user's format", j["state"] == "done" and "## 1. Amaç" in md and "## 3. Sözlük" in md
+          and "FR-001" in md and "Where it comes from" in md, (j.get("error"), res.get("errors"), md[:200]))
     check("specification listed", any(d["name"] == res.get("name") for d in c.get("/api/srs/documents").json()["documents"]))
-    r = ui.post("/api/srs", json={"topic": "customers can pay invoices in instalments", "mode": "new",
-                                  "target": "set:payments"}).json()
+    sysreq = ("SR-1 The system must let customers pay invoices in instalments.\nSR-2 Invoices must include VAT.\n"
+              "SR-3 Refunds above 5000 TL need manager approval.")
+    r = ui.post("/api/srs", json={"topic": sysreq, "target": "set:payments", "template": "company"}).json()
     j = wait_job(ui, r["job"], 600)
     res = j.get("result") or {}
-    check("requirements for something new written (own format, related existing system)", j["state"] == "done"
-          and res.get("mode") == "new" and res.get("template") == "new-feature"
-          and "Related existing system" in res.get("markdown", "") and "Impact on the current system" in res.get("markdown", ""),
-          (j.get("error"), res.get("template"), res.get("errors")))
+    check("software requirements from system requirements (same writer, no mode)", j["state"] == "done" and "mode" not in res
+          and "## 2. İşlevsel gereksinimler" in res.get("markdown", "") and "Status" in res.get("markdown", ""),
+          (j.get("error"), res.get("errors")))
 
     # ---- settings round trip
     old = next(s for s in c.get("/api/settings").json()["settings"] if s["key"] == "BRAIN_SEARCH_TOP_K")["value"]
@@ -306,9 +384,11 @@ def main():
         rows = [{k: x[k] for k in ("name", "provider", "url", "path", "branch")} for x in saved["repos"]]
         r = ui.put("/api/repos", json={"repos": rows + [{"name": "local-pull", "path": str(local), "branch": "main"}],
                                        "sets": saved["sets"] and {k: v for k, v in saved["sets"].items() if k != "all"}})
-        job = c.post("/api/repos/local-pull/sync").json()["job"]
-        wait_job(c, job)
-        Path(local, "src/billing/loyalty.py").write_text("def loyalty_points(amount: float) -> int:\n    return int(amount // 10)\n",
+        check("a new repository is indexed on save, on its branch", r.json().get("indexing") == ["local-pull"]
+              and wait_job(c, r.json()["job"])["state"] == "done", r.text[:200])
+        seen = next(x for x in c.get("/api/repos").json()["repos"] if x["name"] == "local-pull")
+        check("the new repository's branch is indexed", bool(seen.get("commit")), seen)
+        Path(local, "src/billing/loyalty.py").write_text(f"# {time.time()}\ndef loyalty_points(amount: float) -> int:\n    return int(amount // 10)\n",
                                                         encoding="utf-8")
         git(local, "add", "-A")
         git(local, "commit", "-qm", "loyalty points (as if pulled from main)")

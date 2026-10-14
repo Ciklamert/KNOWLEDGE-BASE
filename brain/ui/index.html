@@ -56,7 +56,7 @@
 
   <!-- ======================================================= search -->
   <section id="search" class="view">
-    <header class="page-head"><h1>Search</h1><p class="lede">Every search combines three sources: the code graph (symbols, calls, inheritance), the code vector indexes (code by meaning, also across Turkish and English) and the document graph (business rules, entities, passages). No language-model call.</p></header>
+    <header class="page-head"><h1>Search</h1><p class="lede">Every search combines three sources: the code graph (symbols, calls, inheritance), the code vector indexes (code by meaning, also across Turkish and English) and the document graph (passages, concepts, business rules). No language-model call.</p></header>
     <div class="box">
       <input id="s-q" type="search" placeholder="e.g. where is VAT applied to invoices / fatura KDV" autocomplete="off" class="grow">
       <div class="row">
@@ -92,9 +92,9 @@
 
   <!-- ======================================================= enhance -->
   <section id="enhance" class="view">
-    <header class="page-head"><h1>Enhance a prompt</h1><p class="lede">Turn a short request into an implementation-ready prompt for Claude Code, opencode, pi or any coding agent.</p></header>
+    <header class="page-head"><h1>Enhance a prompt</h1><p class="lede">Turn any request (a bug to fix, a new feature, a change, a refactor, an investigation) into an implementation-ready prompt for Claude Code, opencode, pi or any coding agent. The request type is recognised automatically.</p></header>
     <div class="box">
-      <textarea id="e-q" rows="3" placeholder="e.g. add partial refunds to billing"></textarea>
+      <textarea id="e-q" rows="3" placeholder="e.g. refunds over 1,000 fail with a timeout · customers can pay invoices in instalments · split invoice.py"></textarea>
       <div class="row">
         <label class="inl">Scope <select class="scope-select" id="e-target" title="One repository, or a set: then every repository of the set is searched"></select></label>
         <label class="inl">Model <select class="model-select" id="e-model" data-role="enhance"></select></label>
@@ -117,22 +117,24 @@
 
   <!-- ======================================================= requirements writer -->
   <section id="srs" class="view">
-    <header class="page-head"><h1>Requirements writer</h1><p class="lede">Writes a Software Requirements Specification in plain language that anyone can read, following the format you choose: either for what already exists (from the code and the documents) or for something new you describe (the code and documents are used as context).</p></header>
+    <header class="page-head"><h1>Requirements writer</h1><p class="lede">Writes a Software Requirements Specification in plain language, in your organisation's own format. Give it system requirements, a new idea or just a topic of the current system: every requirement is checked against the current code and documents and marked as existing, changed or new.</p></header>
     <div class="box">
-      <div class="seg" id="q-mode"><button data-v="existing" class="on" title="Describe what the code does and the documents say">What exists</button><button data-v="new" title="Specify a new capability from your request; existing code and documents are used as context">Something new</button></div>
-      <label>What should be specified?<input id="r-topic" placeholder="e.g. the whole billing system / refunds / müşteri iade süreci"></label>
+      <label><span>System requirements, a new idea, or a topic of the current system</span>
+        <textarea id="r-topic" rows="6" placeholder="Paste the system requirements, describe something new (customers can pay invoices in instalments / taksitli ödeme), or name a topic to describe (the refund process)"></textarea></label>
+      <div class="row"><label class="ghost filebtn">Load from a file (Word, PDF, …)<input type="file" id="q-topic-file" hidden></label><span class="muted" id="q-topic-info"></span></div>
       <div class="row">
-        <label class="inl">Scope <select class="scope-select" id="q-target" title="One repository, or a set: then every repository of the set is searched"></select></label>
+        <label class="inl">Scope <select class="scope-select" id="q-target" title="One repository, or a set: then every repository of the set is examined"></select></label>
         <label class="inl">Format <select id="q-template"></select></label>
         <label class="inl">Language <select id="q-lang"><option value="auto">Same as the request</option><option>English</option><option>Turkish</option></select></label>
         <label class="inl">Model <select class="model-select" id="q-model" data-role="srs"></select></label>
         <span class="spacer"></span><button id="q-go">Write specification</button>
       </div>
-      <details class="adv" id="q-tpl-box"><summary>Edit formats</summary>
-        <p class="muted">A format is Markdown: <code>## </code> starts a section; the <code>&gt; </code> lines under a heading tell the writer what to put there;
-          <code>[per capability]</code> writes that section once per feature area; placeholders <code>{{title}} {{date}} {{scope}} {{language}}</code>.</p>
+      <details class="adv" id="q-tpl-box"><summary>Formats</summary>
+        <p class="muted">A format is your organisation's template as Markdown: each heading is a section, the text under it says what to write there.
+          Load a Word or PDF template, or type it. The writer follows its sections, numbering, requirement IDs (e.g. <code>FR-?</code>) and fields;
+          <code>{{title}} {{date}} {{scope}} {{language}}</code> are filled in.</p>
         <div class="row"><label class="inl">Name <input id="q-tpl-name" size="22"></label>
-          <button id="q-tpl-load" class="ghost">Load selected</button><button id="q-tpl-new" class="ghost">New from default</button>
+          <button id="q-tpl-load" class="ghost">Open selected</button><label class="ghost filebtn">Load from a file<input type="file" id="q-tpl-file" hidden></label>
           <button id="q-tpl-save">Save format</button><button id="q-tpl-del" class="del">Delete</button></div>
         <textarea id="q-tpl-text" rows="16" spellcheck="false" class="mono"></textarea>
       </details>
@@ -183,7 +185,7 @@
   <!-- ======================================================= document graph -->
   <section id="docgraph" class="view stage">
     <div class="toolbar">
-      <input id="doc-q" type="search" placeholder="Entity (empty = whole graph)" list="doc-labels" autocomplete="off">
+      <input id="doc-q" type="search" placeholder="Concept (empty = the most connected ones)" list="doc-labels" autocomplete="off">
       <datalist id="doc-labels"></datalist>
       <button id="doc-go" class="ghost">Show</button>
       <span class="legend" id="doc-legend"></span>
@@ -195,15 +197,19 @@
 
   <!-- ======================================================= documents -->
   <section id="documents" class="view">
-    <header class="page-head"><h1>Documents</h1><p class="lede">PDF, Word, PowerPoint, Excel, HTML, CSV, Markdown, text, source code and images. Every document is converted to Markdown first (open it with <b>Markdown</b>); tables keep their structure and pictures are read by the vision model when one is configured.</p></header>
+    <header class="page-head"><h1>Documents</h1><p class="lede">PDF, Word, PowerPoint, Excel, HTML, CSV, JSON, XML, feeds, notebooks, e-books, e-mails, zip archives, Markdown, text, source code and images. Every document is converted to Markdown (open it with <b>Markdown</b>), split along its headings into passages and indexed at once without any model call: keywords, concepts and links between documents. Vectors follow in one batched embedding pass; pictures, charts and scanned pages are described by the vision model when one is configured.</p></header>
     <label class="drop" id="drop" tabindex="0"><input type="file" id="files" multiple hidden>
       <strong>Drop files here</strong> or click to choose</label>
-    <details class="note"><summary>Add a note instead</summary>
-      <input id="note-name" placeholder="Title, e.g. decision-2026-10-payment-retries.md">
-      <textarea id="note-text" rows="5" placeholder="Text…"></textarea>
-      <button id="note-add">Add note</button></details>
+    <details class="note" id="mem-box"><summary>Memory: decisions, rules, gotchas and conventions <span class="muted" id="mem-count"></span></summary>
+      <p class="muted">Short facts that people and agents should not have to relearn. Each one is searchable like a document. A memory with the same type and title replaces the older one, and a memory whose code paths disappear is marked stale.</p>
+      <div class="row"><select id="mem-type"><option>decision</option><option>rule</option><option>gotcha</option><option>convention</option></select>
+        <input id="mem-title" placeholder="Title, e.g. Payment retries stop after three attempts"></div>
+      <textarea id="mem-text" rows="3" placeholder="What, and why…"></textarea>
+      <div class="row"><input id="mem-repo" placeholder="Repository (optional)"><input id="mem-paths" placeholder="Code paths, comma separated (optional)"><button id="mem-add">Remember</button></div>
+      <table class="tbl"><thead><tr><th>Type</th><th>Title</th><th>Where</th><th>Recorded</th><th></th></tr></thead><tbody id="mem-rows"></tbody></table></details>
+    <div class="row"><span class="spacer"></span><button id="doc-reindex" class="ghost" title="Convert and index every document again (after a converter or passage-size change)">Re-index all</button></div>
     <div id="pipe" class="pipe"></div>
-    <table class="tbl"><thead><tr><th>Document</th><th>Status</th><th>Chunks</th><th>Updated</th><th></th></tr></thead><tbody id="doc-rows"></tbody></table>
+    <table class="tbl"><thead><tr><th>Document</th><th>Status</th><th>Passages</th><th title="Requirement sentences and table rows with numbers, found without a model">Rules</th><th>Vectors</th><th>Pictures described</th><th>Updated</th><th></th></tr></thead><tbody id="doc-rows"></tbody></table>
   </section>
 
   <!-- ======================================================= repositories -->
@@ -250,7 +256,7 @@
   <!-- ======================================================= logs -->
   <section id="logs" class="view">
     <header class="page-head"><h1>Logs</h1></header>
-    <div class="row"><div class="seg" id="log-pick"><button data-v="server" class="on">Server</button><button data-v="lightrag">Document engine</button><button data-v="code">Code engine</button></div>
+    <div class="row"><div class="seg" id="log-pick"><button data-v="server" class="on">Server</button><button data-v="code">Code engine</button></div>
       <button id="log-refresh" class="ghost">Refresh</button></div>
     <pre class="code log" id="log-out"></pre>
   </section>

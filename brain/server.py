@@ -16,11 +16,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import agents, auth, drift, jobs, llm, mcp, providers, query, repos, search, srs, webhooks
+from . import agents, auth, drift, jobs, llm, mcp, memory, providers, query, repos, search, srs, webhooks
 from . import settings as cfg
 
 UI = Path(__file__).parent / "ui"
@@ -60,7 +60,7 @@ def _ensure_webhook_secrets() -> None:
 def boot() -> None:
     _ensure_webhook_secrets()
     code_job = jobs.start("startup", "Start code graph engine", lambda j: _start_engine("code", j))
-    jobs.start("startup", "Start document graph engine (LightRAG)", lambda j: _start_engine("docs", j))
+    jobs.start("startup", "Start document graph engine", lambda j: _start_engine("docs", j))
     jobs.start("startup", "Check corporate API (chat + embeddings)", _check_llm)
 
     def initial_sync():
@@ -175,10 +175,30 @@ def status():
         pipe = {}
     return {"ready": ready, "engines": eng, "llm": STARTUP["llm"], "pipeline": pipe,
             "models": {"default": cfg.get("BRAIN_LLM_MODEL"), "ask": cfg.model("ask"), "enhance": cfg.model("enhance"),
-                       "srs": cfg.model("srs"), "guide": cfg.model("guide"), "lightrag": cfg.model("lightrag"), "embedding": cfg.get("BRAIN_EMBEDDING_MODEL"),
+                       "srs": cfg.model("srs"), "guide": cfg.model("guide"), "embedding": cfg.get("BRAIN_EMBEDDING_MODEL"),
                        "vision": cfg.get("BRAIN_VLM_MODEL") or None},
             "running": [j for j in jobs.recent(50) if j["state"] == "running"],
             "uptime": round(time.time() - STARTUP["started"])}
+
+
+@app.get("/api/events")
+async def events(request: Request):
+    """Server-sent events: one message whenever something visible changes (jobs, documents, repositories,
+    settings), so every open page refreshes itself at once instead of polling."""
+    async def stream():
+        last, idle = -1, 0
+        while not await request.is_disconnected():
+            v = jobs.version()
+            if v != last:
+                last, idle = v, 0
+                yield f"data: {v}\n\n"
+            elif idle > 60:
+                idle = 0
+                yield ": keep-alive\n\n"
+            idle += 1
+            await asyncio.sleep(0.3)
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/jobs")
@@ -196,9 +216,9 @@ def job_get(job_id: int):
 
 @app.get("/api/logs/{name}")
 def logs(name: str, lines: int = 200):
-    f = {"lightrag": "lightrag.log", "code": "codebase-memory.log", "server": "server.log"}.get(name)
+    f = {"code": "codebase-memory.log", "server": "server.log"}.get(name)
     if not f:
-        raise HTTPException(404, "logs: lightrag | code | server")
+        raise HTTPException(404, "logs: server | code")
     p = cfg.data_dir() / "logs" / f
     text = p.read_text(encoding="utf-8", errors="replace").splitlines()[-min(lines, 2000):] if p.exists() else []
     return {"name": name, "lines": text}
@@ -276,7 +296,8 @@ async def api_enhance(body: dict = Body(...)):
         raise HTTPException(400, "prompt is required")
     return await _run(_agent, "enhance", body, lambda log=lambda *a, **k: None: agents.enhance(
         p, *_scope(body), repo=body.get("repo"), base_commit=body.get("base_commit"),
-        changed_files=body.get("changed_files"), model=body.get("model") or None, log=log))
+        changed_files=body.get("changed_files"), model=body.get("model") or None,
+        log=log))
 
 
 @app.post("/api/guide")
@@ -289,6 +310,41 @@ async def api_guide(body: dict = Body(...)):
     if body.get("async", True):
         return {"job": jobs.start("guide", f"Project guide: {body.get('target') or 'all'}", lambda j: fn(log=j.log)).id}
     return await _run(fn)
+
+
+@app.get("/api/memory")
+async def memory_list(q: str = "", repo: str = "", type: str = ""):
+    return {"memories": await _run(memory.recall, q or None, repo or None, type or None, 200), "types": memory.TYPES}
+
+
+@app.post("/api/memory")
+async def memory_add(body: dict = Body(...)):
+    """{"type": decision|rule|gotcha|convention, "title", "text", "repo", "paths": [...], "source"}"""
+    try:
+        return await _run(memory.remember, body.get("type"), body.get("title"), body.get("text"), body.get("repo"),
+                          body.get("paths"), body.get("source") or "api")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@app.delete("/api/memory/{name}")
+async def memory_delete(name: str):
+    try:
+        await _run(memory.forget, name)
+    except KeyError as exc:
+        raise _err(exc) from None
+    return {"deleted": name}
+
+
+@app.post("/api/impact")
+async def impact(body: dict = Body(...)):
+    """What a change reaches, without a model call: {"files": [...]} and/or {"symbols": [...]}, scope fields,
+    "depth" (3)."""
+    try:
+        return await _run(agents.impact, body.get("files"), body.get("symbols"), *_scope(body)[:3],
+                          int(body.get("depth") or 3))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
 
 
 @app.post("/api/drift")
@@ -313,8 +369,14 @@ async def repo_list(request: Request):
 
 @app.put("/api/repos")
 async def repo_save(body: dict = Body(...)):
-    """Save repositories and sets: {"repos": [...], "sets": {"name": ["repo", ...]}}."""
-    return await _run(cfg.save_repos, body.get("repos", []), body.get("sets"))
+    """Save repositories and sets: {"repos": [...], "sets": {"name": ["repo", ...]}}. A repository that is new, or
+    whose URL, path or tracked branch changed, is indexed at once (`job`)."""
+    where = lambda r: (r["provider"], r["url"], r["path"], r["branch"])
+    before = {r["name"]: where(r) for r in repos.all_repos()}
+    saved = await _run(cfg.save_repos, body.get("repos", []), body.get("sets"))
+    changed = [r["name"] for r in saved["repos"] if before.get(r["name"]) != where(r)]
+    job = repos.request_sync(changed, "added or changed") if changed else None
+    return {**saved, "indexing": changed, "job": job.id if job else None}
 
 
 @app.post("/api/repos/sync")
@@ -470,6 +532,21 @@ async def doc_text(body: dict = Body(...)):
     return await _run(providers.docs().add_text, body.get("name") or "note.md", body["text"])
 
 
+@app.post("/api/docs/reindex")
+def doc_reindex():
+    """Convert and index every uploaded original again (after a converter or passage-size change)."""
+    return {"job": jobs.start("upload", "Re-index all documents", lambda j: providers.docs().reindex(log=j.log)).id}
+
+
+@app.post("/api/convert")
+async def convert_file(file: UploadFile = File(...)):
+    """Any supported document -> Markdown, without indexing it (system requirements and formats for the
+    requirements writer, or a quick look at what a file becomes)."""
+    from .providers import convert
+    data = await file.read()
+    return {"name": file.filename, "markdown": await _run(lambda: convert.convert(file.filename or "file", data).text)}
+
+
 @app.delete("/api/docs/{doc_id}")
 async def doc_delete(doc_id: str):
     return await _run(providers.docs().delete, [doc_id])
@@ -515,8 +592,8 @@ async def srs_template_delete(name: str):
 
 @app.post("/api/srs")
 async def srs_write(body: dict = Body(...)):
-    """Write a specification (background job unless "async": false). mode: existing (describe what the code and
-    documents contain) | new (specify something new from the request, with the knowledge base as context)."""
+    """Write a specification (background job unless "async": false). topic: the request, any length: a topic of the
+    current system, system requirements or a new idea; it is checked against the current code and documents."""
     topic = str(body.get("topic", "")).strip()
     if not topic:
         raise HTTPException(400, "topic is required")
@@ -524,7 +601,7 @@ async def srs_write(body: dict = Body(...)):
 
     def fn(log=lambda *a, **k: None):
         return srs.write(topic, set_name, rn, body.get("template") or None, body.get("language") or None,
-                         body.get("model") or None, body.get("title") or None, mode=body.get("mode") or "existing", log=log)
+                         body.get("model") or None, body.get("title") or None, log=log)
     if body.get("async", True):
         return {"job": jobs.start("srs", f"Requirements: {topic[:80]}", lambda j: fn(log=j.log)).id}
     return await _run(fn)

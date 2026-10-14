@@ -185,6 +185,13 @@ def sync_repo(name: str, job: jobs.Job | None = None) -> dict:
                 "project": res.get("project", r["name"]), "nodes": res.get("nodes"), "edges": res.get("edges"),
                 "error": None}
         info["vectors"] = _vectors(info["project"], log)
+        try:
+            from . import memory
+            stale = memory.check_stale(r["name"], root)
+            if stale:
+                log(f"{r['name']}: {stale} memory(ies) point at code that no longer exists")
+        except Exception as exc:
+            log(f"{r['name']}: memory check skipped: {exc}")
     except Exception as exc:
         _save_state(lambda d: d["repos"].setdefault(name, {}).update(error=str(exc), failed_at=time.time()))
         raise
@@ -219,12 +226,12 @@ def sync_all(job: jobs.Job, names: list[str] | None = None) -> dict:
     return {"synced": out, "errors": errors}
 
 
-def request_sync(name: str | None = None, reason: str = "manual") -> jobs.Job | None:
+def request_sync(name: str | list[str] | None = None, reason: str = "manual") -> jobs.Job | None:
     """Start an update (pull + incremental index) in the background at once. A request for a repository whose update
     is already running is not lost and not run twice in parallel: that update runs once more when it finishes, so
     changes that arrived meanwhile (a merge fires both a merge and a push event) are always picked up.
     Returns the new job, or None when every requested repository was already being updated (it is queued)."""
-    names = [name] if name else [r["name"] for r in all_repos()]
+    names = [name] if isinstance(name, str) else list(name or []) or [r["name"] for r in all_repos()]
     with _flags:
         fresh = [n for n in names if n not in _active]
         _again.update(n for n in names if n in _active)

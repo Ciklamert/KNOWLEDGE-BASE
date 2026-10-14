@@ -4,39 +4,47 @@ Pipeline (each stage can be switched off in Settings; see docs/05-SEARCH-ASK-ENH
   0. prompt analysis (brain/query.py): stop-words out, key terms ranked, variants and concepts built;
   1. recall, in parallel: code = BM25 over key terms + variants and semantic search over key terms inside the code
      engine (no network) + the corporate multilingual code vector index (brain/codevec.py, BRAIN_CODE_VECTORS);
-     documents = LightRAG graph + vector retrieval with concepts as high-level and key terms as low-level keywords
-     (embedding call only); scope "semantic" = code by meaning only (both vector indexes, no BM25);
+     documents = the document engine (keywords + passage vectors + concept graph, embedding call only);
+     scope "semantic" = code by meaning only (both vector indexes, no BM25);
      exact names: identifiers and file paths written in the question find their symbols directly and are
      always ranked first (the user is pointing at them);
   2. document -> code bridge (BRAIN_DOC_BRIDGE): the domain entities the documents returned (e.g. "Payment
-     Gateway", "Retry Policy") become extra code-search terms, so business words in Turkish or English reach the
-     code that implements them;
+     Gateway", "Retry Policy") become extra code-search terms, and each concept's stored vector is compared with the
+     stored code vectors (BRAIN_CONCEPT_CODE_SIM), so business words in Turkish or English reach the code that
+     implements them, without an API call;
   3. code-graph expansion (BRAIN_GRAPH_EXPAND): callers, callees and parents of the best hits join the
      candidates, so code wired to the matches is found even when it shares no words with the question;
-  4. re-ranking (BRAIN_RERANK): the full prompt and every candidate (code snippet / document passage) are embedded
-     with the corporate MULTILINGUAL embedding model and ordered by meaning, blended with the lexical rank.
-     A Turkish question therefore ranks English code by what it means, not only by shared words;
+  4. re-ranking (BRAIN_RERANK): the code candidates are ordered by meaning, blended with the lexical rank, using
+     the multilingual code vectors stored at indexing. A Turkish question therefore ranks English code by what it
+     means, not only by shared words;
   5. repository balance: when several repositories are searched (a set), every repository with relevant code
      keeps a place in the result, so a set answer looks at all of its codebases; every hit is annotated from the
      graph (signature, callers, callees, parents) and says which source found it (field "matched").
 Every result therefore combines the three sources: code graph, code vector indexes and document graph.
+
+A search makes at most ONE call to the corporate API: the embedding of the question, shared by the code vectors, the
+document passages and the re-ranking, and cached. It waits for it at most BRAIN_EMBED_BUDGET seconds; on a slow
+gateway the search answers from keywords, the graphs and concepts instead, and the late embedding is kept.
 """
 from __future__ import annotations
 
 import hashlib
-import math
 import re
 import threading
 import time
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeout
+
+import numpy as np
 
 from . import codevec, llm, providers, query as qa, repos
 from . import settings as cfg
 
 _pool = ThreadPoolExecutor(8, thread_name_prefix="search")
-_cache: "OrderedDict[str, list[float]]" = OrderedDict()   # text hash -> embedding (re-ranking)
+_embed_pool = ThreadPoolExecutor(2, thread_name_prefix="embed")
+_cache: "OrderedDict[str, list[float]]" = OrderedDict()   # text hash -> embedding
 _cache_lock = threading.Lock()
+_inflight: dict[str, Future] = {}
 
 
 def _embed(texts: list[str]) -> list[list[float]]:
@@ -54,26 +62,42 @@ def _embed(texts: list[str]) -> list[list[float]]:
         return [_cache[k] for k in keys]
 
 
-def _cos(a: list[float], b: list[float]) -> float:
-    na, nb = math.sqrt(sum(x * x for x in a)), math.sqrt(sum(x * x for x in b))
-    return sum(x * y for x, y in zip(a, b)) / (na * nb) if na and nb else 0.0
+def query_vector(text: str) -> list[float] | None:
+    """The embedding of a question within BRAIN_EMBED_BUDGET seconds, or None. Concurrent requests for the same text
+    share one API call; an embedding that arrives late is cached for the next search."""
+    text = text[:2000]
+    key = hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
+    with _cache_lock:
+        if key in _cache:
+            return _cache[key]
+        fut = _inflight.get(key)
+        if fut is None:
+            fut = _inflight[key] = _embed_pool.submit(_embed, [text])
+            fut.add_done_callback(lambda _f: _inflight.pop(key, None))
+    try:
+        return fut.result(timeout=cfg.get("BRAIN_EMBED_BUDGET"))[0]
+    except FutureTimeout:
+        return None
 
 
-def rerank(query: str, items: list[dict], text, keep: int, weight: float | None = None) -> list[dict]:
-    """Order items by blend = w * semantic similarity (corporate embeddings) + (1 - w) * lexical rank score."""
-    if len(items) < 2:
+def rerank(qv: list[float], items: list[dict], keep: int, weight: float | None = None) -> list[dict]:
+    """Order code hits by blend = w * similarity to the question + (1 - w) * lexical rank score, with the vectors
+    stored at indexing (codevec): no API call. Hits without a stored vector get the average similarity."""
+    stored = codevec.vectors(items)
+    if len(items) < 2 or not stored:
         return items[:keep]
     w = cfg.get("BRAIN_RERANK_WEIGHT") if weight is None else weight
-    vecs = _embed([query[:2000]] + [text(it)[:2000] for it in items])
-    qv, n = vecs[0], len(items)
-    for i, (it, v) in enumerate(zip(items, vecs[1:])):
-        it["similarity"] = round(_cos(qv, v), 4)
-        it["rerank"] = round(w * it["similarity"] + (1 - w) * (1 - i / n), 4)
+    q = np.asarray(qv, dtype=np.float32)
+    q /= max(float(np.linalg.norm(q)), 1e-9)
+    sims = {k: float(v @ q) for k, v in stored.items() if v.shape == q.shape}
+    if not sims:
+        return items[:keep]
+    mean, n = sum(sims.values()) / len(sims), len(items)
+    for i, it in enumerate(items):
+        sim = sims.get((it["project"], it["qn"]), mean)
+        it["similarity"] = round(sim, 4)
+        it["rerank"] = round(w * sim + (1 - w) * (1 - i / n), 4)
     return sorted(items, key=lambda it: -it["rerank"])[:keep]
-
-
-def _code_text(h: dict) -> str:
-    return f"{h['label']} {h['name']} {h['qn']} {h['path']}\n{h.get('code') or ''}"
 
 
 def _bridge_terms(docs: dict, known: list[str]) -> list[str]:
@@ -92,6 +116,28 @@ def _bridge_terms(docs: dict, known: list[str]) -> list[str]:
             seen.add(compact.casefold())
             out.append(compact)
     return out[:12]
+
+
+def _concept_code(docs: dict, projects: list[str]) -> list[dict]:
+    """Code that implements the concepts the documents returned: concept vectors against the stored code vectors.
+    Each concept also records the code it points to (`implemented_by`)."""
+    get = getattr(providers.docs(), "concept_vectors", None)
+    if not get or not codevec.enabled() or not docs.get("entities"):
+        return []
+    try:
+        vecs = get([e["name"] for e in docs["entities"][:8]])
+    except Exception:
+        return []
+    th, out = cfg.get("BRAIN_CONCEPT_CODE_SIM"), []
+    for e in docs["entities"][:8]:
+        v = vecs.get(e["name"])
+        if v is None:
+            continue
+        hits = [h for h in codevec.search(v.tolist(), projects, 3) if h["similarity"] >= th]
+        if hits:
+            e["implemented_by"] = [f"{h['project']}/{h['path']}:{h['line1']} {h['name']}" for h in hits]
+            out += _tag(hits, f"implements concept: {e['name']}")
+    return out
 
 
 def _diversify(hits: list[dict], k: int) -> list[dict]:
@@ -168,14 +214,14 @@ def search(query: str, scope: str = "all", set_name: str | None = None, repo_nam
                 f_code = _pool.submit(code.search, query, kw, projects, pool_k,
                                       "semantic" if scope == "semantic" else "hybrid")
                 if codevec.enabled():
-                    f_vec = _pool.submit(lambda: codevec.search(_embed([query[:2000]])[0], projects, pool_k))
+                    f_vec = _pool.submit(lambda: (lambda qv: codevec.search(qv, projects, pool_k) if qv else None)(
+                        query_vector(query)))
             else:
                 out["errors"].append("code: no indexed repository in this scope yet")
         except KeyError as exc:
             out["errors"].append(f"code: {exc.args[0]}")
     if scope in ("all", "docs"):
-        f_docs = _pool.submit(providers.docs().search, query, kw, chunks * 2 if use_rerank else chunks,
-                              cfg.get("LIGHTRAG_TOP_K"), analysis["concepts"])
+        f_docs = _pool.submit(providers.docs().search, query, kw, chunks, 12, analysis["concepts"])
     timeout = cfg.get("BRAIN_SEARCH_TIMEOUT")
     code_hits: list[dict] = []
     if f_code:
@@ -187,8 +233,11 @@ def search(query: str, scope: str = "all", set_name: str | None = None, repo_nam
             out["errors"].append(f"code: {exc or 'timeout'}")
     if f_vec:
         try:
-            vec_hits = _tag(f_vec.result(timeout=timeout), "multilingual code vectors")
-            if vec_hits:
+            vec_hits = f_vec.result(timeout=timeout)
+            if vec_hits is None:
+                out["pipeline"].append(f"meaning skipped: the embedding API took longer than BRAIN_EMBED_BUDGET "
+                                       f"({cfg.get('BRAIN_EMBED_BUDGET'):g} s)")
+            elif _tag(vec_hits, "multilingual code vectors"):
                 code_hits = _merge(code_hits, vec_hits, 1.0)
                 out["pipeline"].append("multilingual code vector index")
         except Exception as exc:
@@ -196,7 +245,7 @@ def search(query: str, scope: str = "all", set_name: str | None = None, repo_nam
     if f_docs:
         try:
             out["docs"] = f_docs.result(timeout=timeout)
-            out["pipeline"].append("document graph (entities, relations, passages)")
+            out["pipeline"].append("document graph (passages, concepts, facts)")
         except Exception as exc:
             out["errors"].append(f"docs: {exc or 'timeout'}")
     # 1b. exact names and file paths written in the question
@@ -220,6 +269,10 @@ def search(query: str, scope: str = "all", set_name: str | None = None, repo_nam
                 out["pipeline"].append(f"document -> code bridge ({len(terms)} terms)")
             except Exception as exc:
                 out["errors"].append(f"bridge: {exc}")
+        linked = _concept_code(out["docs"], projects)
+        if linked:
+            code_hits = _merge(code_hits, linked)
+            out["pipeline"].append(f"concept -> code by meaning ({len(linked)})")
     # 3. code-graph expansion: callers / callees / parents of the best hits
     if projects and scope != "semantic" and cfg.get("BRAIN_GRAPH_EXPAND") and code_hits:
         try:
@@ -230,20 +283,18 @@ def search(query: str, scope: str = "all", set_name: str | None = None, repo_nam
         except Exception as exc:
             out["errors"].append(f"graph expansion: {exc}")
     code_hits = code_hits[:pool_k * 2]   # bound the re-ranking cost
-    # 4. semantic re-ranking with the corporate embedding model
-    if use_rerank and (len(code_hits) > 1 or len(out["docs"].get("chunks") or []) > 1):
+    # 4. semantic re-ranking of the code candidates with their stored vectors (the document engine already fuses
+    #    keywords, passage vectors and concepts itself); the question's embedding is the one already fetched
+    if use_rerank and len(code_hits) > 1 and codevec.enabled():
         try:
-            if code_hits:
-                code_hits = rerank(query, code.with_code(code_hits), _code_text, len(code_hits))
-            if out["docs"].get("chunks"):
-                out["docs"]["chunks"] = rerank(query, out["docs"]["chunks"], lambda c: c["content"], chunks)
-            out["pipeline"].append("semantic re-rank")
+            qv = query_vector(query)
+            if qv:
+                code_hits = rerank(qv, code_hits, len(code_hits))
+                out["pipeline"].append("semantic re-rank (stored code vectors)")
         except Exception as exc:
             out["errors"].append(f"re-rank skipped: {exc}")
     # 5. final: named symbols first, repository balance, source lines, graph context (signature, callers, callees)
     out["code"] = code.annotate(code.with_code(_diversify(_pin(code_hits), k)))
-    if out["docs"].get("chunks"):
-        out["docs"]["chunks"] = out["docs"]["chunks"][:chunks]
     if out["code"]:
         try:
             out["relations"] = code.relations(out["code"][:6], 30)
@@ -254,7 +305,8 @@ def search(query: str, scope: str = "all", set_name: str | None = None, repo_nam
     out["sources"] = {"code graph": sum(1 for x in m if x in ("keywords", "document terms") + PINNED or x.startswith("code graph")),
                       "code vectors": sum(1 for x in m if "vectors" in x),
                       "document passages": len(d.get("chunks") or []), "document entities": len(d.get("entities") or []),
-                      "document facts": len(d.get("relations") or []), "code relations": len(out["relations"])}
+                      "document facts": len(d.get("relations") or []), "document rules": len(d.get("rules") or []),
+                      "code relations": len(out["relations"])}
     out["ms"] = int((time.time() - t0) * 1000)
     return out
 
@@ -265,7 +317,7 @@ def _lang(path: str) -> str:
             "h": "c", "hpp": "cpp", "yml": "yaml"}.get(ext, ext)
 
 
-# detail level -> (hits with source, source lines, passage chars, relations, entities, facts, names per caller list)
+# detail level -> (hits with source, source lines, passage chars, relations, entities, facts and rules, names per list)
 LEVELS = {"brief": (0, 0, 300, 0, 6, 6, 3), "normal": (3, 15, 600, 10, 8, 8, 5), "full": (99, 30, 1000, 25, 12, 10, 6)}
 
 
@@ -312,9 +364,16 @@ def render(r: dict, max_chars: int | None = None, detail: str | None = None) -> 
         items.append("## Document passages")
         for c in d["chunks"]:
             items.append(f"> **{c['source']}**: " + " ".join(c["content"].split())[:n_pass])
+    if d.get("rules"):
+        items.append("## Business rules\n" + "\n".join(
+            f"- [{x['modality']}] {x['text'][:300]}" + (f" (limits: {', '.join(x['limits'])})" if x.get("limits") else "")
+            + f" · {x['source']}" for x in d["rules"][:n_fact]))
     if d.get("entities"):
         items.append("## Domain entities\n" + "\n".join(
-            f"- **{e['name']}** ({e['type']}): {e['description'][:200]}" for e in d["entities"][:n_ent]))
+            f"- **{e['name']}** ({e['type']}): {e['description'][:200]}"
+            + (f" · also: {', '.join(e['aliases'])}" if e.get("aliases") else "")
+            + (f" · implemented by: {'; '.join(e['implemented_by'])}" if e.get("implemented_by") else "")
+            for e in d["entities"][:n_ent]))
     if d.get("relations"):
         items.append("## Domain facts\n" + "\n".join(
             f"- {e['a']} → {e['b']}: {e['description'][:200]}" for e in d["relations"][:n_fact]))

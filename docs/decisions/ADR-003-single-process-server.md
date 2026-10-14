@@ -4,11 +4,12 @@
 
 ## Decision
 `brain serve` runs one FastAPI application under uvicorn. It serves the static UI, the REST API, the MCP endpoint and
-the webhooks on `BRAIN_HOST:BRAIN_PORT`. The two engines are child processes it owns. Long work runs in background
+the webhooks on `BRAIN_HOST:BRAIN_PORT`. The code engine is a child process it owns; the document engine runs inside it
+(ADR-002). Long work runs in background
 threads tracked as jobs (`brain/jobs.py`).
 
 ## Why
-FastAPI and uvicorn come with `lightrag-hku[api]`, so nothing extra is installed. One port means one firewall rule,
+FastAPI and uvicorn are small and need no other service. One port means one firewall rule,
 one TLS certificate, one login and one URL for people, agents and git servers.
 
 ## Alternatives

@@ -15,14 +15,14 @@ Every prompt first goes through `brain/query.py` (no model call, a few milliseco
 6. guess the language: `tr`, `en`, `mixed` or `unknown`.
 
 The analysis drives everything after it: the code engine's BM25 query is key terms + variants, its vector query the
-key terms, LightRAG's high-level keywords the concepts and its low-level keywords the key terms + variants; the agents
+key terms, the document engine's keywords the key terms + variants and its concept match the concepts; the agents
 receive the analysis before the retrieved material. It is returned in every response, available alone at
 `POST /api/analyze`, and shown live in the UI while typing.
 
 ## Alternatives
 | Option | Why not |
 |---|---|
-| let LightRAG's model extract keywords | a chat call per search; search must not call a model |
+| let a model extract keywords | a chat call per search; search must not call a model |
 | full NLP (spaCy, Zemberek, stemmers) | models and packages for two languages; the heuristics cover the identifiers and nouns that matter for code and business documents |
 | a flat keyword list (the first N non-stop words) | no ranking: verbs and filler words crowd out identifiers; Turkish inflected forms miss exact matches |
 

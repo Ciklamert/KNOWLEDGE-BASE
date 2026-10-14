@@ -5,7 +5,6 @@
 | Direction | What | Notes |
 |---|---|---|
 | inbound | `BRAIN_PORT` (default 8765): UI, REST, MCP, webhooks | bind address `BRAIN_HOST` (default `0.0.0.0`); open the firewall only to the networks of users, agents and git servers |
-| local only | LightRAG on `127.0.0.1:LIGHTRAG_PORT` (default 9631) | never exposed; `NO_PROXY` keeps its traffic away from proxies |
 | outbound | `BRAIN_LLM_BASE_URL` (and `BRAIN_EMBEDDING_BASE_URL` if set) | the only AI traffic; TLS verified (`BRAIN_CA_BUNDLE` for an internal CA, `BRAIN_VERIFY_TLS`) |
 | outbound | GitLab (`BRAIN_GITLAB_URL`), TFS (`BRAIN_TFS_URL`), other git servers | clone and fetch over HTTPS with a token header, or SSH |
 | none | code engine | makes no network calls |
@@ -47,7 +46,7 @@ TLS at a reverse proxy (IIS ARR, nginx) and set `BRAIN_HOST=127.0.0.1`.
 
 ## 6. Data
 Uploaded documents, converted Markdown, indexed code and all indexes stay under `data/` on the server. Content
-leaves the server only towards the corporate API: document chunks for extraction and embedding, code symbol texts
+leaves the server only towards the corporate API: document passages for embedding, pictures for the vision model, code symbol texts
 for the multilingual code vectors, prompts with retrieved context for the agents. Setting
 `BRAIN_CODE_VECTORS=local` keeps all code on the server.
 

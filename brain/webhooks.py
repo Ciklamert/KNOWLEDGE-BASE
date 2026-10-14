@@ -20,7 +20,7 @@ import re
 import time
 from collections import deque
 
-from . import repos
+from . import jobs, repos
 from . import settings as cfg
 
 LOG: deque = deque(maxlen=50)   # recent deliveries, shown in the UI
@@ -69,6 +69,7 @@ def _events() -> set[str]:
 
 def _result(source: str, status: int, body: dict) -> tuple[int, dict]:
     LOG.appendleft({"time": time.time(), "source": source, "status": status, **body})
+    jobs.tick()
     return status, body
 
 

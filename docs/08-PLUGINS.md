@@ -1,4 +1,4 @@
-# 08 - Plug-ins: replacing the code engine or LightRAG
+# 08 - Plug-ins: replacing the code engine or the document engine
 
 Everything outside `brain/providers/` talks to two abstract interfaces, `CodeGraph` and `DocGraph`. Replacing an
 engine means writing one class and changing one setting; search, agents, the requirements writer, MCP, REST, the UI
@@ -9,7 +9,7 @@ and the webhooks keep working.
 | Setting | Default | Value |
 |---|---|---|
 | `BRAIN_CODE_PROVIDER` | `codebase_memory` | a module name in `brain/providers/` (its class `Provider`), or `package.module:ClassName` |
-| `BRAIN_DOC_PROVIDER` | `lightrag` | the same |
+| `BRAIN_DOC_PROVIDER` | `docgraph` | the same |
 
 Changing it in **Settings** stops the old engine and starts the new one; changing it in `.env` needs a server
 restart. The loader checks that the class implements the right interface.
@@ -49,14 +49,15 @@ A *project* is one indexed tree: a repository (named like the repository) or a b
 
 | Method | Required | Contract |
 |---|---|---|
-| `upload(filename, data)` | yes | ingest a file; return `{file, status, message, …}` |
+| `upload(filename, data)` | yes | ingest a file (use `convert.convert()` for the Markdown); return `{file, status, message, …}` |
 | `add_text(name, text)` | yes | ingest a note |
 | `delete(doc_ids)` | yes | remove documents and everything derived from them |
-| `documents()` | yes | `[{id, name, status, chunks, updated_at, error}]` |
-| `search(query, keywords, chunks, top_k, concepts)` | yes | **no chat call**; `keywords` = key terms + variants, `concepts` = themes; return `{chunks: [{source, content}], entities: [{name, type, description}], relations: [{a, b, description}]}` |
-| `pipeline()` | no | ingestion progress `{busy, job, message, batch, batches, docs, history}` |
+| `documents()` | yes | `[{id, name, status, chunks, updated_at, error}]` (the built-in engine adds `vectors`, `pictures`, `described`) |
+| `search(query, keywords, chunks, top_k, concepts)` | yes | **no chat call**; `keywords` = key terms + variants, `concepts` = themes; return `{chunks: [{source, doc, content}], entities: [{name, type, description}], relations: [{a, b, description}]}`: passages, concepts, facts |
+| `pipeline()` | no | background activity `{busy, message}` |
 | `graph(label, max_nodes, depth)` | no | `{nodes: [{id, name, kind, description}], links: [{source, target, type, description}], truncated}` |
-| `labels(q)` | no | entity names |
+| `labels(q)` | no | concept names |
+| `reindex(log)` | no | convert and index every original again |
 | `markdown(name)` | no | the Markdown a document was converted to |
 
 ## 3. A new document engine, step by step
@@ -79,7 +80,8 @@ A *project* is one indexed tree: a repository (named like the repository) or a b
        def documents(self): ...
        def search(self, query, keywords, chunks, top_k, concepts=None): ...
    ```
-   To keep the Markdown conversion, call `brain.providers.convert.to_markdown(filename, data)` in `upload`.
+   To keep the Markdown conversion, call `brain.providers.convert.convert(filename, data)` in `upload`; its `.text`
+   is the Markdown and `.assets` the extracted pictures.
 3. Set `BRAIN_DOC_PROVIDER=mydocs` (or `mycompany.brain_ext:MyDocs`).
 4. Put its own settings in `.env` under any name and read them with `cfg.raw("NAME", "default")`, or add them to
    the schema in `brain/settings.py` and run `python tools/gen_config.py`, so they appear in the UI and in
@@ -98,9 +100,10 @@ in the documented shape and keep `search` free of model calls. If the engine has
 | GitNexus, CodeGraphContext, code-graph-rag | code | need Node or an external graph database (Neo4j, Kuzu, Memgraph); wrap their MCP server or CLI in `CodeGraph` |
 | Sourcegraph / Zoekt | code (search only) | good lexical search; no relations |
 | graphify | code | no vector search; see [18-ENGINE-COMPARISON.md](18-ENGINE-COMPARISON.md) |
-| RAGFlow, Haystack, Microsoft GraphRAG | documents | wrap their REST API in `DocGraph`; keep `search` free of chat calls |
-| LightRAG with PostgreSQL or Neo4j storage | documents | no new provider: set `LIGHTRAG__LIGHTRAG_GRAPH_STORAGE=Neo4JStorage` (and the other storage variables) with their connection variables through `LIGHTRAG__…` |
+| RAGFlow, Haystack | documents | wrap their REST API in `DocGraph`; keep `search` free of chat calls |
+| LightRAG, Microsoft GraphRAG | documents | possible through `DocGraph`, but they call a model for every chunk while indexing (see [ADR-002](decisions/ADR-002-document-graph.md)) |
 
 ## 6. Data when switching
 Each provider keeps its own data under `data/`. Switching does not delete the old engine's data, so switching back
-works. A new document engine starts empty: upload the files in `data/originals/` again.
+works. A new document engine starts empty: *Re-index all* on the Documents page feeds it every file in
+`data/originals/`.

@@ -109,6 +109,17 @@ def check(repo_name: str, branch: str | None = None, base_commit: str | None = N
                     "files": rep["branch_files"][:50],
                     "how": "for these files read your working copy instead of AI-BRAIN snippets; use AI-BRAIN for everything "
                            "else (callers, docs, other modules)."})
+        try:
+            from . import providers
+            imp = providers.code().impact(r["name"], rep["branch_files"])
+            rep["tests_to_run"] = [f"{t['path']}::{t['symbol'].rsplit('.', 1)[-1]}" for t in imp["tests"]]
+            if imp["tests"]:
+                rec.append({"action": "run_tests", "why": f"{len(imp['tests'])} test(s) cover code you changed or its "
+                            f"callers", "files": imp["test_files"][:50],
+                            "how": "run these tests before pushing; `impact` (MCP) or POST /api/impact lists the "
+                                   "callers and routes as well."})
+        except Exception:
+            pass   # an older index or another code engine: the rest of the check still stands
         if len(rep["branch_files"]) >= 10 and branch and branch != main:
             rec.append({"action": "index_branch",
                         "why": "many files differ from main: a branch overlay makes search and agents see your code",

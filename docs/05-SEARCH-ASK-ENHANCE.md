@@ -45,8 +45,8 @@ response returns it as `analysis`.
 6. **Language**: `tr`, `en`, `mixed` or `unknown`, from the stop-words and Turkish letters found.
 
 How the analysis is used: the code engine's keyword (BM25) query is key terms + variants; its vector query is the
-first eight key terms; LightRAG gets the concepts as high-level keywords and key terms + variants as low-level
-keywords; the agents receive the analysis ("key terms, most important first; ignored stop-words") before the
+first eight key terms; the document engine matches the key terms + variants in its keyword index and the concepts
+against its concept names; the agents receive the analysis ("key terms, most important first; ignored stop-words") before the
 retrieved material, and every search they make with their tools is analysed the same way.
 
 ## 3. The search pipeline
@@ -56,11 +56,11 @@ retrieved material, and every search they make with their tools is analysed the 
 | # | Stage | What it does | Setting |
 |---|---|---|---|
 | 1 | **Query expansion** (agents only) | Ask, enhance and the requirements writer first make one short model call that returns up to 10 extra search terms: likely English code identifiers, translations (Turkish ↔ English) and synonyms. They are added after the user's own key terms and shown as "expanded". On error or timeout the search continues without them. | `BRAIN_QUERY_EXPANSION`, `BRAIN_QUERY_EXPANSION_TIMEOUT` |
-| 2 | **Recall, in parallel** | (a) Code engine, per repository: BM25 over names, qualified names, paths and bodies plus a vector search with its bundled code model, fused by reciprocal rank (`1/(60+rank)`). (b) The multilingual code vector index (`brain/codevec.py`), when `BRAIN_CODE_VECTORS=both`. (c) LightRAG `/query/data` in `LIGHTRAG_QUERY_MODE` (default `mix`: entities, relations and chunk vectors) with the keywords supplied, so LightRAG makes **no chat call**. The candidate pool is `BRAIN_RERANK_CANDIDATES` (default 30). | `BRAIN_CODE_VECTORS`, `LIGHTRAG_TOP_K` |
+| 2 | **Recall, in parallel** | (a) Code engine, per repository: BM25 over names, qualified names, paths and bodies plus a vector search with its bundled code model, fused by reciprocal rank (`1/(60+rank)`). (b) The multilingual code vector index (`brain/codevec.py`), when `BRAIN_CODE_VECTORS=both`. (c) The document engine: BM25 over the passages, the passage vectors and the concept graph, fused by reciprocal rank (no chat call; section 4). The code candidate pool is `BRAIN_RERANK_CANDIDATES` (default 30). | `BRAIN_CODE_VECTORS`, `BRAIN_SEARCH_DOC_CHUNKS` |
 | 2b | **Exact names** | Identifiers and file paths written in the question (`apply_vat`, `InvoiceService.create_invoice`, `src/billing/tax.py`) are looked up directly: symbols with that name or qualified-name tail, and the main symbols of that file. They are tagged "exact name" or "file path" and always ranked first, because the user is pointing at them. | always on |
-| 3 | **Document → code bridge** | Entity names from the document results ("Payment Gateway", "Retry Policy") become extra code-search terms (`Payment`, `Gateway`, `PaymentGateway`). The extra hits are merged at half weight and tagged "document terms". | `BRAIN_DOC_BRIDGE` |
+| 3 | **Document → code bridge** | Concept names from the document results ("Payment Gateway", "Retry Policy") become extra code-search terms (`Payment`, `Gateway`, `PaymentGateway`). The extra hits are merged at half weight and tagged "document terms". | `BRAIN_DOC_BRIDGE` |
 | 4 | **Code-graph expansion** | Callers, callees, parents and implementations of the best `BRAIN_GRAPH_EXPAND_TOP` (default 5) hits join the candidates at half weight, tagged for example "code graph: called by charge". This finds code wired to the matches even when it shares no words with the question. | `BRAIN_GRAPH_EXPAND`, `BRAIN_GRAPH_EXPAND_TOP` |
-| 5 | **Re-ranking by meaning** | The prompt, every code candidate (kind, name, path and source) and every document passage are embedded with the corporate multilingual embedding model. Final order = `BRAIN_RERANK_WEIGHT` (default 0.6) × similarity + the rest × lexical rank. Embeddings are cached in memory (20,000 texts). | `BRAIN_RERANK`, `BRAIN_RERANK_WEIGHT` |
+| 5 | **Re-ranking by meaning** | Each code candidate is compared with the question through the multilingual code vector stored for it at indexing (`brain/codevec.py`), so re-ranking costs no API call; a candidate without a stored vector gets the average similarity (document passages are already ranked by meaning in the document engine). Final order = `BRAIN_RERANK_WEIGHT` (default 0.6) × similarity + the rest × lexical rank. Needs `BRAIN_CODE_VECTORS=both`. | `BRAIN_RERANK`, `BRAIN_RERANK_WEIGHT` |
 | 6 | **Final result** | Exact names first, repository balance (every repository with hits keeps one or two places), the best `BRAIN_SEARCH_TOP_K` (default 8) code hits with up to 40 source lines each, annotations from the graph (signature, up to 6 callers and callees, up to 4 parents), relations between the hits, and the best `BRAIN_SEARCH_DOC_CHUNKS` (default 6) passages. | `BRAIN_SEARCH_TOP_K`, `BRAIN_SEARCH_DOC_CHUNKS` |
 
 Ranking details inside the code engine: test files count half (×0.5), symbols of one or two lines count ×0.6, and
@@ -78,7 +78,32 @@ Every result combines:
 1. **Code graph** (codebase-memory-mcp): keyword matches, graph expansion, relations, signatures, callers,
    callees, parents;
 2. **Code vectors**: the code engine's local code embeddings and the multilingual code vector index;
-3. **Document graph** (LightRAG): passages, entities and facts (relations).
+3. **Document graph** (the document engine): passages, concepts and facts.
+
+### How the document engine answers
+1. **Keywords**: the key terms, variants and multi-word concepts, folded the way the index is (lower case, ş = s,
+   ı = i), are searched in the SQLite FTS5 index (BM25) over every passage, its section path and its document name.
+2. **Vectors**: the query embedding (shared with the code search) is compared with every passage vector.
+3. **Concepts**: concepts whose name equals a key term or concept of the question (in any word form: iadeler,
+   iadesi and iade are one concept), the concepts nearest to the question by meaning (`BRAIN_CONCEPT_SIM`), and
+   their aliases (concepts that mean the same, such as "iade onayı" and "Refund Approval") lead to the passages that
+   name them (half weight).
+4. The three lists are fused by reciprocal rank. Each passage carries its document, section path and page
+   (`source`, for example `contract.pdf › 4 Payments › 4.2 Refunds, p. 12`), its kind (text, table, picture, figure),
+   what found it (`matched`) and its similarity.
+5. **Concepts** (`entities`): the concepts named in these passages, the ones the question names first, each with its
+   definition when a glossary or "Term: definition" line gives one.
+6. **Facts** (`relations`): sentences of these passages that name two of those concepts.
+7. **Rules** (`rules`): the requirement sentences of these passages, typed `obligation` ("-malıdır", "zorunludur",
+   "gerekir", "must", "shall", "need"), `prohibition` ("yasaktır", "edilemez", "-mamalıdır", "must not", "cannot"),
+   `recommendation` ("should", "önerilir") or `limit`, each with the limits it states ("5.000 TL üzeri", "en geç 3
+   iş günü içinde", "over 1,000 EUR"), and table rows with numbers written with their column names (`value`). The
+   rules that contain the question's words come first. Found when the document is indexed, without a model.
+
+Concept → code: after the documents answer, each returned concept's stored vector is compared with the stored
+multilingual code vectors; code at `BRAIN_CONCEPT_CODE_SIM` or above joins the code hits (tagged "implements
+concept: …") and the concept lists it as `implemented_by`. No API call is made. The similarity scale depends on
+the embedding model, so check the links on real questions and tune the setting.
 
 Each code hit carries `matched`, the list of what found it: `exact name`, `file path`, `keywords`, `code vectors`,
 `multilingual code vectors`, `document terms`, `code graph: …`. The response carries `sources`, the number of hits
@@ -86,7 +111,7 @@ per source, and `pipeline`, the stages that ran.
 
 The Markdown rendering (`render()`, used for agents, MCP and the CLI) gives every code hit its location
 `repo/path:line-line`, kind, qualified name, signature, callers, callees, parents and "found by", then document
-passages, domain entities and domain facts, and ends with next-step hints (`symbol`, `outline`, `read`, `trace`). The
+passages, business rules, concepts (with aliases and the code that implements them) and facts, and ends with next-step hints (`symbol`, `outline`, `read`, `trace`). The
 **detail level** (`BRAIN_SEARCH_DETAIL`, or `detail` per request) decides how much is written:
 
 | Detail | Source code | Relations | Passage length | Typical size (8 hits) |
@@ -108,16 +133,30 @@ Response: `query`, `scope`, `analysis`, `pipeline`, `sources`, `code[]` (each wi
 `rerank`), `relations[]`, `docs` (`chunks`, `entities`, `relations`), `projects`, `errors`, `ms` and `markdown`
 (rendered at the requested `detail`).
 
-"No chat call" means no chat-completion call. Search makes embedding calls: one for the query in LightRAG, one
-for the multilingual code vectors and one batched call for re-ranking (cached).
+"No chat call" means no chat-completion call. Search makes at most **one** call to the corporate API: the embedding
+of the question, shared by the multilingual code vectors, the document passages and the re-ranking, and cached
+(20,000 texts). It waits for it at most `BRAIN_EMBED_BUDGET` seconds (default 3). On a slow gateway the search then
+answers from keywords, the code graph and the concepts, and says so in `pipeline` ("meaning skipped"); the embedding
+still arrives in the background and is used by the next search with the same question.
 
 ## 6. Enhance prompt
 
 `brain/agents.py` `enhance()`; `POST /api/enhance`, MCP `enhance_prompt`, `brain enhance`, UI **Enhance prompt**,
 Claude Code command `integrations/claude-code/brain-enhance.md`.
 
-Input: the developer's short request in any language, the scope, the model, and optionally branch facts (`repo`,
-`branch`, `base_commit`, `changed_files`).
+Input: the developer's request in any language and of any kind, the scope, the model, and optionally branch facts
+(`repo`, `branch`, `base_commit`, `changed_files`). There is no mode to choose: one enhancer handles every class of
+request. It first classifies the request and then looks for what that class needs:
+
+| Class | The agent looks for |
+|---|---|
+| bug fix | the failing path from its entry point to the faulty code, the likely root cause with evidence, how to reproduce it, the tests that should have caught it |
+| new feature | not the feature (it does not exist), but where it plugs in: entry points to extend, modules and data it uses, the most similar existing feature to imitate |
+| change, refactor, performance, security, migration | the symbols to change, their callers (impact), the behaviour that must stay the same, how to verify or measure the result |
+| tests, configuration, investigation, documentation, question | what is to be found out, written or covered, and where the answer lives |
+
+A request can have two classes (a new feature that also fixes a bug); the agent names both. For every class it also
+collects the business rules from documents and the conventions from the code.
 
 1. Prompt analysis and query expansion.
 2. Seed search (section 3) for the request.
@@ -126,16 +165,19 @@ Input: the developer's short request in any language, the scope, the model, and 
 4. The model (`BRAIN_ENHANCE_MODEL`, else `BRAIN_LLM_MODEL`) runs with the enhancer system prompt and the
    read-only tools for at most `BRAIN_ENHANCE_MAX_STEPS` (default 4) rounds within `BRAIN_ENHANCE_TIMEOUT`
    (default 120 s), `BRAIN_ENHANCE_MAX_TOKENS` (1800) and `BRAIN_ENHANCE_TEMPERATURE` (0.2).
-5. Output in the developer's language with these sections: **Task** (with the intent type, for example [bug fix]),
-   **Context** (`repo/path:line` - symbol - why it matters), **Business rules and constraints**, **Impact**,
-   **Implementation plan**, **Acceptance criteria**, **Out of scope**, **Open questions and assumptions**, **Notes
-   for the agent**.
+5. Output in the developer's language with these sections (empty ones left out): **Task** (with the request class, for example [bug fix] or [new feature]), **What exists today**
+   (`repo/path:line` - symbol - change / read / imitate / extend), **Analysis** (only what the class needs: for a bug
+   the symptom, reproduction and likely root cause; for a new feature where it fits, files to create, data and
+   interfaces; for a refactor the target shape and the behaviour to keep; for performance the hot path and how to
+   measure it), **Business rules and constraints**, **Impact**, **Implementation plan**, **Acceptance criteria**
+   (for a bug, a test that fails before the fix), **Out of scope**, **Open questions and assumptions**, **Notes for
+   the agent**.
 
 Fallback: if the model cannot be reached, a deterministic prompt is built from the search (task, key terms,
 relevant code, knowledge-base context, branch notes), so a coding agent still gets a grounded prompt.
 
-Response: `enhanced`, `model`, `llm` (whether the model wrote it), `analysis`, `sources`, `evidence`, `steps`,
-`drift`, `errors`, `ms`.
+Response: `enhanced`, `model`, `llm` (whether the model wrote it), `analysis`, `sources`, `evidence`,
+`steps`, `drift`, `errors`, `usage`, `ms`.
 
 ## 7. Ask
 
@@ -215,7 +257,7 @@ the gateway); the UI shows them under each answer.
 
 | Function | Chat calls | Embedding calls | Typical time |
 |---|---|---|---|
-| search | 0 | 1 (documents) + 1 (code vectors) + 1 batched (re-ranking, cached) | 0.5-3 s |
+| search | 0 | at most 1 (the question; cached; waits at most `BRAIN_EMBED_BUDGET`) | 0.2-3 s |
 | ask | 1 expansion + 1 to 1 + `BRAIN_ASK_MAX_STEPS` | as search, plus one search per `search`/`semantic`/`docs` tool call | 5-60 s, at most `BRAIN_ASK_TIMEOUT` |
 | enhance | 1 expansion + 1 to 1 + `BRAIN_ENHANCE_MAX_STEPS` | as ask | 5-45 s, at most `BRAIN_ENHANCE_TIMEOUT` |
 | project guide | 1 expansion + 1 to 1 + `BRAIN_GUIDE_MAX_STEPS` | as ask | 10-120 s, at most `BRAIN_GUIDE_TIMEOUT` |

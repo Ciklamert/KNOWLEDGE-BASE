@@ -9,15 +9,13 @@ gives ranked evidence from all sources; ask / enhance_prompt / write_requirement
 """
 from __future__ import annotations
 
-import json
-
-from . import agents, drift, providers, repos, search, srs
+from . import agents, drift, memory, providers, repos, search, srs
 
 VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 INSTRUCTIONS = ("Organisation knowledge base: code graph + code vectors + documents of every configured repository. "
                 "Use it instead of grep/glob/read: `symbol` for one symbol, `outline` then `read` for a file, `grep` "
                 "for exact text, `files` for paths, `search` for anything by meaning (detail=brief to scan). "
-                "`enhance_prompt` plans a task; `check_branch` when not on main. Verify locations in your working "
+                "`impact` before and after editing (what breaks, tests to run); `recall` at the start of a task and `remember` what you learned that the next session needs (decisions, gotchas); `enhance_prompt` plans a task; `check_branch` when not on main. Verify locations in your working "
                 "copy before editing. Scope: `repo` = one repository, `set` = a repository set (default: all "
                 "repositories); `branch` uses a branch overlay when one is indexed.")
 _S, _I, _B = {"type": "string"}, {"type": "integer"}, {"type": "boolean"}
@@ -31,51 +29,55 @@ def _tool(name: str, desc: str, props: dict, required: list[str], scope: bool = 
 
 
 TOOLS = [
-    _tool("search", "Ranked code (graph + vectors) and document results for a question in any language, no LLM. "
-                    "Each hit: location, signature, callers, callees, why it matched. detail: brief (no source), "
-                    "normal (source of 3 best), full.",
+    _tool("search", "Ranked code (graph + vectors) and documents for a question in any language, no LLM. Each hit: "
+                    "location, signature, callers, callees, why. detail: brief (no source), normal, full.",
           {"query": _S, "scope": {"type": "string", "enum": ["all", "code", "semantic", "docs"]},
            "detail": {"type": "string", "enum": ["brief", "normal", "full"]}, "k": _I, **BRANCH}, ["query"]),
-    _tool("symbol", "A class/function/method by name: location, signature, source (auto: whole if short), callers, "
-                    "callees, other matches.",
+    _tool("symbol", "A symbol by name: location, signature, source, callers, callees, other matches.",
           {"name": _S, "source": {"type": "string", "enum": ["auto", "full", "none"]}, **BRANCH}, ["name"]),
-    _tool("outline", "Declarations of one file with line ranges. Read this before reading the file.",
+    _tool("outline", "Declarations of a file with line ranges; read it before the file.",
           {"path": _S}, ["path"]),
-    _tool("read", "Numbered lines of a file (max 400). Repo optional: the first repository with the file is used.",
+    _tool("read", "Numbered lines of a file (max 400); repo optional.",
           {"path": _S, "start": _I, "end": _I}, ["path"]),
     _tool("grep", "Exact text or regex, ranked by the code graph. mode: files (paths only), matches, full.",
           {"pattern": _S, "regex": _B, "mode": {"type": "string", "enum": ["files", "matches", "full"]},
            "file_pattern": {"type": "string", "description": "e.g. *.java"}, "path": {"type": "string", "description": "folder"}},
           ["pattern"]),
     _tool("files", "Indexed file paths matching a glob, e.g. **/*.sql.", {"pattern": _S}, ["pattern"]),
-    _tool("trace", "Call chain of a function for impact analysis.",
+    _tool("trace", "Call chain of a function.",
           {"function_name": _S, "direction": {"type": "string", "enum": ["inbound", "outbound", "both"]},
            "depth": _I}, ["function_name"]),
-    _tool("overview", "A repository's structure: languages, packages, entry points, routes, hotspots, file tree.",
+    _tool("impact", "What a change to files or symbols reaches (no LLM): dependants, routes, tests, rules.",
+          {"files": {"type": "array", "items": _S}, "symbols": {"type": "array", "items": _S}, "depth": _I,
+           **BRANCH}, []),
+    _tool("overview", "A repository's structure: packages, entry points, routes, hotspots, file tree.",
           {"repo": _S, "path": {"type": "string", "description": "folder"},
            "aspects": {"type": "array", "items": {"type": "string", "enum": [
                "overview", "structure", "routes", "hotspots", "entry_points", "dependencies", "layers", "file_tree"]}}},
           ["repo"], scope=False),
-    _tool("ask", "A grounded answer with citations, researched by a server-side agent (uses the LLM).",
+    _tool("ask", "A cited answer researched by a server-side agent (LLM).",
           {"question": _S, "model": _S, **BRANCH}, ["question"]),
-    _tool("enhance_prompt", "Turn a short request into an implementation-ready prompt (task, context, rules, impact, "
-                            "plan, acceptance criteria). Pass repo/base_commit/changed_files for branch warnings.",
-          {"prompt": _S, "base_commit": _S, "changed_files": {"type": "array", "items": _S}, "model": _S, **BRANCH},
-          ["prompt"]),
-    _tool("write_requirements", "A Software Requirements Specification in plain language (slow: many LLM calls). "
-                                "mode: existing (what the code and documents contain) or new (specify something new "
-                                "from the topic).",
-          {"topic": _S, "mode": {"type": "string", "enum": ["existing", "new"]}, "template": _S, "language": _S,
+    _tool("enhance_prompt", "Any request (bug, feature, refactor ...) as an implementation-ready prompt; "
+                            "base_commit/changed_files add branch warnings.",
+          {"prompt": _S, "base_commit": _S,
+           "changed_files": {"type": "array", "items": _S}, "model": _S, **BRANCH}, ["prompt"]),
+    _tool("write_requirements", "Software requirements in a format the user saved, checked against code and documents "
+                                "(slow). topic: system requirements, a new idea or a topic of the current system.",
+          {"topic": _S, "template": _S, "language": _S,
            "model": _S}, ["topic"]),
-    _tool("check_branch", "Drift of your branch against the indexed main: commits behind, conflict-risk files, what "
-                          "to do. Pass branch, base_commit (git merge-base HEAD origin/main) and changed_files "
-                          "(git diff --name-only origin/main...HEAD + git status --porcelain).",
+    _tool("check_branch", "Your branch vs the indexed main: commits behind, conflict-risk files, tests, what to do. "
+                          "base_commit: git merge-base HEAD origin/main; changed_files: git diff --name-only "
+                          "origin/main...HEAD + uncommitted.",
           {"repo": _S, "branch": _S, "base_commit": _S, "head_commit": _S, "changed_files": {"type": "array", "items": _S}},
           ["repo"], scope=False),
     _tool("list_repos", "Repositories, sets, indexed commits, branch overlays.", {}, [], scope=False),
     _tool("list_documents", "Documents and their processing status.", {}, [], scope=False),
-    _tool("add_note", "Store a finding or decision as a document.", {"name": _S, "text": _S}, ["name", "text"], scope=False),
-    _tool("sync_repo", "Update and re-index one repository (or all) in the background.", {"repo": _S}, [], scope=False),
+    _tool("remember", "Keep a decision, rule, gotcha or convention for later sessions (same type+title replaces).",
+          {"type": {"type": "string", "enum": list(memory.TYPES)}, "title": _S, "text": _S, "repo": _S,
+           "paths": {"type": "array", "items": _S}}, ["type", "title", "text"], scope=False),
+    _tool("recall", "Facts kept with remember, newest first or by query.",
+          {"query": _S, "repo": _S, "type": _S}, [], scope=False),
+    _tool("sync_repo", "Update and re-index a repository (or all) in the background.", {"repo": _S}, [], scope=False),
 ]
 CODE_TOOLS = ("symbol", "outline", "read", "grep", "files", "trace", "overview")
 
@@ -92,16 +94,17 @@ def call_tool(name: str, a: dict) -> str:
     if name in CODE_TOOLS:
         ctx = agents.Context(*_scope(a)) if name != "overview" else agents.Context(None, [a["repo"]])
         return ctx.run_tool(name, a)
+    if name == "impact":
+        return agents.impact(a.get("files"), a.get("symbols"), *_scope(a), int(a.get("depth") or 3))["markdown"]
     if name == "ask":
         r = agents.ask(a["question"], *_scope(a), model=a.get("model"))
         return r["answer"] + (f"\n\n(notes: {'; '.join(r['errors'])})" if r["errors"] else "")
     if name == "enhance_prompt":
         r = agents.enhance(a["prompt"], *_scope(a), repo=a.get("repo"), base_commit=a.get("base_commit"),
-                           changed_files=a.get("changed_files"), model=a.get("model"))
+                           changed_files=a.get("changed_files"), model=a.get("model"),)
         return r["enhanced"]
     if name == "write_requirements":
-        r = srs.write(a["topic"], *_scope(a)[:2], a.get("template"), a.get("language"), a.get("model"),
-                      mode=a.get("mode") or "existing")
+        r = srs.write(a["topic"], *_scope(a)[:2], a.get("template"), a.get("language"), a.get("model"))
         return r["markdown"] + (f"\n\n(notes: {'; '.join(r['errors'])})" if r["errors"] else "")
     if name == "check_branch":
         return drift.render(drift.check(a["repo"], a.get("branch"), a.get("base_commit"), a.get("changed_files"),
@@ -114,8 +117,11 @@ def call_tool(name: str, a: dict) -> str:
                          for r in repos.overview()) or "No repositories configured."
     if name == "list_documents":
         return "\n".join(f"{d['id']}  {d['status']:<10} {d['name']}" for d in providers.docs().documents()) or "No documents."
-    if name == "add_note":
-        return json.dumps(providers.docs().add_text(a["name"], a["text"]), ensure_ascii=False)
+    if name == "remember":
+        m = memory.remember(a["type"], a["title"], a["text"], a.get("repo"), a.get("paths"), "agent")
+        return f"{'replaced' if m['replaced'] else 'recorded'}: [{m['type']}] {m['title']}"
+    if name == "recall":
+        return memory.render(memory.recall(a.get("query"), a.get("repo"), a.get("type")))
     if name == "sync_repo":
         job = repos.request_sync(a.get("repo"), "mcp")
         return f"sync started (job {job.id})" if job else "a sync for this repository was just requested; skipped"

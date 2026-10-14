@@ -19,22 +19,24 @@ indexed (on `search`, `symbol`, `ask`, `enhance_prompt`).
 | `grep` | `pattern`, `regex`, `mode` (`files`, `matches`, `full`), `file_pattern`, `path` (folder) | exact text or regex, ranked by the code graph; `mode=files` only locates | 50-600 tokens |
 | `files` | `pattern` (glob such as `**/*.sql`) | indexed file paths (at most 300; says when more match) | small |
 | `trace` | `function_name`, `direction` (`inbound`, `outbound`, `both`), `depth` (3) | call chains for impact analysis | at most `BRAIN_TOOL_MAX_TOKENS` |
+| `impact` | `files` and/or `symbols`, `depth` (3), `branch` | what a change reaches, no model call: the changed symbols, the code that depends on them (callers, subclasses, overrides), entry points (routes), the tests to run and the business rules that name the code | small |
 | `overview` | `repo`, `path` (folder), `aspects` (`overview`, `structure`, `routes`, `hotspots`, `entry_points`, `dependencies`, `layers`, `file_tree`) | a repository's structure | at most `BRAIN_TOOL_MAX_TOKENS` |
 | `search` | `query`, `scope` (`all`, `code`, `semantic`, `docs`), `detail` (`brief`, `normal`, `full`), `k` | ranked results from the code graph, the code vectors and the documents, no model call; each hit with location, signature, callers, callees and why it matched | brief ≈ 500, normal ≈ 1,000, full ≈ 1,700 tokens |
 | `ask` | `question`, `model` | a grounded answer with citations, researched by a server-side agent | the answer only |
-| `enhance_prompt` | `prompt`, `base_commit`, `changed_files`, `model` | an implementation-ready prompt; with branch facts also branch-drift warnings | the prompt only |
-| `write_requirements` | `topic`, `mode` (`existing`, `new`), `template`, `language`, `model` | a Software Requirements Specification in plain language, for what exists or for something new (slow) | a document |
+| `enhance_prompt` | `prompt` (any kind: bug fix, new feature, refactor ...), `base_commit`, `changed_files`, `model` | an implementation-ready prompt; with branch facts also branch-drift warnings | the prompt only |
+| `write_requirements` | `topic` (system requirements, a new idea or a topic of the current system), `template` (one of the user's formats), `language`, `model` | a Software Requirements Specification in plain language in the user's format (slow) | a document |
 | `check_branch` | `repo`, `branch`, `base_commit`, `head_commit`, `changed_files` | branch drift report with recommendations | small |
 | `list_repos` | | one line per repository: provider, branch, sets, indexed commit, symbols, overlays, errors | small |
 | `list_documents` | | documents and their processing status | small |
-| `add_note` | `name`, `text` | store a finding or decision as a new document | small |
+| `remember` | `type` (`decision`, `rule`, `gotcha`, `convention`), `title`, `text`, `repo`, `paths` | keep a lasting fact for every later session; searchable like a document; the same type and title replaces the older one | one line |
+| `recall` | `query`, `repo`, `type` | the facts recorded earlier, newest first or ranked for the query; stale ones are marked | small |
 | `sync_repo` | `repo` (empty = all) | update and re-index in the background | small |
 
 ## 2. Token economy
 An agent pays tokens twice: for the tool list, which is sent with every turn, and for every answer it reads.
 AI-BRAIN keeps both small:
 - **A short tool list.** Terse descriptions, scope arguments explained once in the instructions: the list is about
-  5,400 characters (≈ 1,340 tokens) for 16 tools.
+  about 6,000 characters (≈ 1,500 tokens) for 18 tools.
 - **Exact tools first.** `symbol`, `outline`, `read`, `grep` and `files` answer exact questions in a few hundred
   tokens. `ask`, `enhance_prompt` and `write_requirements` run their model calls on the server, so the agent reads
   only the result, not the research.
@@ -62,10 +64,13 @@ AI-BRAIN keeps both small:
 The agent opens local files only to edit them, after checking AI-BRAIN's locations in its working copy.
 
 ## 4. Recommended agent workflow
-1. A task arrives → `enhance_prompt` (with branch facts when not on `main`).
+1. A task arrives → `recall` (what earlier sessions learned), then `enhance_prompt` (with branch facts when not
+   on `main`).
 2. Research → `search` (`detail=brief` to scan), then `symbol`, `outline` + `read`, `grep`, `trace` for details.
-3. Not on `main` → `check_branch` and follow its recommendations.
-4. Learned something lasting → `add_note`.
+3. Before and after editing → `impact` with the files or symbols you touch: what depends on them and which tests
+   to run.
+4. Not on `main` → `check_branch` and follow its recommendations (it also lists the tests to run).
+5. Learned something the next session needs (a decision and why, a gotcha, a convention) → `remember`.
 
 ## 5. Claude Code
 ```bash

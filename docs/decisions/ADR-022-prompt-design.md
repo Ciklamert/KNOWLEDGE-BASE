@@ -20,12 +20,14 @@ quality characteristics.
   tag last.
 - **Ask**: Answer (one to four sentences) → Details (flows in call order, rules, each cited) → Where to look → Gaps and
   conflicts.
-- **Enhance**: classify the intent; locate entry points, symbols, callers, data models, configuration, tests and
-  similar code; the minimal change; explicit assumptions and open questions; sections Task, Context, Business rules
-  and constraints, Impact, Implementation plan, Acceptance criteria, Out of scope, Open questions and assumptions,
-  Notes for the agent.
-- **Requirements writer**: plain language, EARS, ISO 29148 quality, Why / Acceptance criteria / Status, no technical
-  names in the body (ADR-021).
+- **Enhance**: one prompt for every request. Classify it (bug fix, new feature, change, refactor, performance,
+  security, tests, migration, configuration, investigation, documentation, question; two classes if needed); look
+  for what the class needs (the failing path and root cause for a bug; where it plugs in and what to imitate for a
+  new feature; callers and invariants for a refactor); the minimal change; explicit assumptions and open questions;
+  sections Task [class], What exists today, Analysis (class-specific), Business rules and constraints, Impact,
+  Implementation plan, Acceptance criteria, Out of scope, Open questions and assumptions, Notes for the agent.
+- **Requirements writer**: plain language, EARS sentences, ISO 29148 quality, no technical names in the body; the
+  fields and sections are the user's format, never built in (ADR-021).
 - **Expansion**: returns only a JSON array of terms (identifiers, translations, synonyms).
 
 ## Consequences
