@@ -71,11 +71,20 @@ Python 3.13 wheels only, no second service; a graph of concepts and links, not o
 | [Microsoft GraphRAG](https://github.com/microsoft/graphrag), `--method fast` | noun-phrase graph with NLTK/spaCy and co-occurrence | text | LLM community reports still needed | large dependency set (spaCy models, pandas, LanceDB) and model calls at indexing |
 | [Tencent WeKnora](https://github.com/Tencent/WeKnora) | full RAG platform with MCP endpoints, optional Neo4j | PDF, Word, Excel, images and more | LLM-driven (Q&A, wiki, optional graph) | a platform with its own services and databases, not an embeddable engine |
 | [LightRAG](https://github.com/HKUDS/LightRAG) | LLM entity and relation extraction | via its own parsers | one or more chat calls per chunk | the reason for the change (ADR-002) |
+| [txtai](https://github.com/neuml/txtai) + [kb-mcp-server](https://github.com/Geeksfino/kb-mcp-server) | embeddings database (sparse + dense + SQL) with a semantic graph: edges from vector similarity, Louvain topics labelled with BM25 terms; kb-mcp-server serves a txtai archive over MCP | whatever the caller extracts; kb-mcp-server's builder is a convenience tool | none, but embeddings come from local Hugging Face models (torch, transformers) or LiteLLM | no entities, rules or concepts, only similarity edges and topics; torch or LiteLLM and downloaded models in the bundle; a second process. Less understanding than docgraph, more weight |
+| [LinearRAG](https://github.com/DEEP-PolyU/LinearRAG) (ICLR 2026) | relation-free "Tri-Graph": spaCy NER entities, sentences and passages, semantic bridging | text | none (zero tokens at indexing) | its retrieval idea is adopted (entity graph + propagation); its stack is not: English spaCy transformer model, local mpnet embeddings, torch |
+| SPRIG ([arXiv 2602.23372](https://arxiv.org/abs/2602.23372)) | NER co-occurrence graph + Personalized PageRank, CPU-only | text | none | the same idea as docgraph's concept graph + PageRank; notes that strong lexical hybrids are often enough |
+| [HippoRAG](https://arxiv.org/abs/2405.14831) | LLM-built knowledge graph + Personalized PageRank from the question's concepts | text | chat calls per passage | the PageRank retrieval is adopted; the LLM extraction is not |
+| [DocGraph (carrilloapps)](https://github.com/carrilloapps/docgraph) | Node.js MCP server: documents, headings, tags and links in SQLite, FTS5 + hashed vectors | Markdown and text formats, no PDF or Office | none | structure-only and early; docgraph already covers more |
+| [GLiNER multi v2.1](https://huggingface.co/urchade/gliner_multi-v2.1) (Apache-2.0) | small multilingual zero-shot NER model; runs as ONNX on CPU with onnxruntime + sentencepiece, no torch | text | none | the only offline way found to get typed entities (person, organisation, system, regulation ...) without an LLM; 349 MB int8 model; Turkish quality unverified; an optional next step |
 
 **Result:** none of them is simpler and covers more. The closest, knowledge-rag, would add ChromaDB, an ONNX runtime
-and downloaded models, handle PDF tables and pictures worse, and drop the concept graph. The built-in engine stays.
-Two ideas were checked and are already in it: reciprocal-rank fusion of BM25 and vectors, and passages that keep their
-heading path and page.
+and downloaded models, handle PDF tables and pictures worse, and drop the concept graph. txtai + kb-mcp-server would
+replace concepts and rules with similarity edges and topics, and add torch or LiteLLM. The built-in engine stays, and
+it takes the research results that need no model: reciprocal-rank fusion of BM25 and vectors, passages that keep
+their heading path and page, a concept co-occurrence graph (LazyGraphRAG, LinearRAG, SPRIG), and Personalized
+PageRank retrieval over it (HippoRAG, LinearRAG, SPRIG). Typed entities would need a local NER model such as GLiNER;
+LightRAG-depth relations need a language model reading every passage, which the slow gateway cannot afford.
 
 ## 7. Sources
 - graphify: github.com/Graphify-Labs/graphify (README: "Not a vector index. No embeddings, no vector store");

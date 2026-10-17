@@ -1,0 +1,283 @@
+{
+ "_about": "What the document grammar should find in tests/eval/corpus, annotated by hand: units (keys), resolved references (source key -> target key), defined terms, and the slots of a sample of normative sentences (actor and action: the expected text must appear in the extracted slot; null: the slot must be empty, e.g. a passive sentence without 'tarafından').",
+ "units": {
+  "bilgi-guvenligi-yonetmeligi.pdf": [
+   "chapter:1",
+   "chapter:2",
+   "chapter:3",
+   "art:1",
+   "art:2",
+   "art:3",
+   "art:4",
+   "art:5",
+   "art:6",
+   "art:7",
+   "art:8",
+   "art:9",
+   "art:10",
+   "art:gecici1",
+   "art:1/par:1",
+   "art:4/par:1",
+   "art:4/par:1/ite:a",
+   "art:4/par:1/ite:b",
+   "art:4/par:1/ite:c",
+   "art:4/par:1/ite:ç",
+   "art:5/par:1",
+   "art:5/par:2",
+   "art:5/par:3",
+   "art:6/par:1",
+   "art:6/par:2",
+   "art:6/par:3",
+   "art:7/par:1",
+   "art:7/par:2",
+   "art:10/par:1",
+   "art:10/par:2",
+   "art:2/par:1",
+   "art:3/par:1",
+   "art:8/par:1",
+   "art:9/par:1",
+   "art:gecici1/par:1"
+  ],
+  "degisiklik-yonetimi-proseduru-v2.docx": [
+   "sec:1",
+   "sec:2",
+   "sec:3",
+   "sec:4",
+   "sec:4.1",
+   "sec:4.2",
+   "sec:4.3",
+   "sec:5",
+   "sec:5.1",
+   "sec:5.2",
+   "sec:6"
+  ],
+  "payments-srs.md": [
+   "sec:1",
+   "sec:2",
+   "sec:3",
+   "sec:3.1",
+   "sec:3.2",
+   "sec:4",
+   "sec:5",
+   "req:REQ-001",
+   "req:REQ-002",
+   "req:REQ-003",
+   "req:REQ-004",
+   "req:REQ-005",
+   "req:NFR-001",
+   "req:NFR-002",
+   "req:NFR-003"
+  ],
+  "access-control-policy.docx": [
+   "sec:1",
+   "sec:2",
+   "sec:3",
+   "sec:3.1",
+   "sec:3.2",
+   "sec:4",
+   "sec:4.1",
+   "sec:4.2",
+   "sec:4.3",
+   "sec:5",
+   "sec:6"
+  ],
+  "olay-mudahale-plani.md": [
+   "sec:1",
+   "sec:2",
+   "sec:3",
+   "sec:4",
+   "sec:5"
+  ]
+ },
+ "refs": [
+  [
+   "bilgi-guvenligi-yonetmeligi.pdf",
+   "art:7/par:2",
+   "art:5/par:2"
+  ],
+  [
+   "bilgi-guvenligi-yonetmeligi.pdf",
+   "art:gecici1",
+   "art:5"
+  ],
+  [
+   "degisiklik-yonetimi-proseduru-v2.docx",
+   "sec:5.2",
+   "sec:4.3"
+  ],
+  [
+   "payments-srs.md",
+   "req:REQ-004",
+   "req:REQ-001"
+  ],
+  [
+   "payments-srs.md",
+   "req:REQ-004",
+   "sec:3.1"
+  ],
+  [
+   "payments-srs.md",
+   "sec:5",
+   "sec:3.2"
+  ],
+  [
+   "access-control-policy.docx",
+   "sec:5",
+   "sec:4.2"
+  ]
+ ],
+ "definitions": {
+  "bilgi-guvenligi-yonetmeligi.pdf": [
+   "Bilgi varlığı",
+   "BGYS",
+   "Sistem sahibi",
+   "Ayrıcalıklı hesap"
+  ],
+  "payments-srs.md": [
+   "Settlement Window",
+   "PSP",
+   "Chargeback"
+  ],
+  "sozluk.md": [
+   "DDK",
+   "KVKK",
+   "SLA",
+   "RTO",
+   "MFA"
+  ]
+ },
+ "statements": [
+  {
+   "text": "erişim taleplerini en geç 2 iş günü",
+   "modality": "obligation",
+   "actor": "sistem sahibi",
+   "action": "onayla"
+  },
+  {
+   "text": "iki faktörlü kimlik doğrulama zorunludur",
+   "modality": "obligation",
+   "actor": null,
+   "action": "zorunlu"
+  },
+  {
+   "text": "görevi sona erdiğinde aynı gün kaldırılır",
+   "modality": "obligation",
+   "actor": null,
+   "action": "kaldır"
+  },
+  {
+   "text": "en az 12 karakter uzunluğunda olmalıdır",
+   "modality": "obligation",
+   "actor": "parolalar",
+   "action": "ol"
+  },
+  {
+   "text": "90 günde bir değiştirilmelidir",
+   "modality": "obligation",
+   "actor": null,
+   "action": "değiştir"
+  },
+  {
+   "text": "son 5 parola içinde tekrar kullanılamaz",
+   "modality": "prohibition",
+   "actor": null,
+   "action": "kullan"
+  },
+  {
+   "text": "ayrıcalıklı hesaplar üç ayda bir gözden geçirilmelidir",
+   "modality": "obligation",
+   "actor": "bilgi güvenliği birimi",
+   "action": "gözden geçir"
+  },
+  {
+   "text": "haftalık toplantıda onaylanmalıdır",
+   "modality": "obligation",
+   "actor": "değişiklik danışma kurulu",
+   "action": "onayla"
+  },
+  {
+   "text": "saat içinde onaylanmalıdır",
+   "modality": "obligation",
+   "actor": "değişiklik yöneticisi",
+   "action": "onayla"
+  },
+  {
+   "text": "geri dönüş planı hazırlanmalıdır",
+   "modality": "obligation",
+   "actor": null,
+   "action": "hazırla"
+  },
+  {
+   "text": "olayı 15 dakika içinde olay yönetim sistemine kaydetmelidir",
+   "modality": "obligation",
+   "actor": "nöbetçi mühendis",
+   "action": "kaydet"
+  },
+  {
+   "text": "en geç 72 saat içinde Kişisel Verileri Koruma Kuruluna bildirilmelidir",
+   "modality": "obligation",
+   "actor": null,
+   "action": "bildir"
+  },
+  {
+   "text": "kendi isteğini onaylayamaz",
+   "modality": "prohibition",
+   "actor": "isteğini açan kişi",
+   "action": "onayla"
+  },
+  {
+   "text": "en az iki geliştirici tarafından onaylanmalıdır",
+   "modality": "obligation",
+   "actor": "geliştirici",
+   "action": "onayla"
+  },
+  {
+   "text": "MUST retry a failed PSP call",
+   "modality": "obligation",
+   "actor": "payment service",
+   "action": "retry"
+  },
+  {
+   "text": "SHALL NOT store full card numbers",
+   "modality": "prohibition",
+   "actor": "payment service",
+   "action": "not store"
+  },
+  {
+   "text": "MAY issue partial refunds",
+   "modality": "permission",
+   "actor": "refund service",
+   "action": "issue"
+  },
+  {
+   "text": "Line managers must approve new accounts",
+   "modality": "obligation",
+   "actor": "line managers",
+   "action": "approve"
+  },
+  {
+   "text": "shall not both request and approve",
+   "modality": "prohibition",
+   "actor": "same person",
+   "action": "not both"
+  },
+  {
+   "text": "QA must sign off the regression suite",
+   "modality": "obligation",
+   "actor": "qa",
+   "action": "sign"
+  },
+  {
+   "text": "must roll back the release",
+   "modality": "obligation",
+   "actor": "on-call engineer",
+   "action": "roll"
+  },
+  {
+   "text": "Privileged accounts must use multi-factor authentication",
+   "modality": "obligation",
+   "actor": "privileged accounts",
+   "action": "use"
+  }
+ ]
+}

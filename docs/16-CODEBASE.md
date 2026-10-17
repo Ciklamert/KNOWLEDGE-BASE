@@ -1,7 +1,7 @@
 # 16 - The codebase: every file and its important facts
 
 Size: about 6,350 lines of Python (with docstrings), a 750-line UI script, 270 lines of HTML and 220 lines of CSS.
-No framework beyond FastAPI and uvicorn; 11 direct Python dependencies.
+No framework beyond FastAPI and uvicorn; 12 direct Python dependencies.
 
 ## 1. Root
 
@@ -105,10 +105,12 @@ tests through TESTS edges and test paths.
 ## 8. brain/providers/docgraph.py
 The document engine ([ADR-002](decisions/ADR-002-document-graph.md)); no model call per chunk.
 - Storage: one SQLite file `data/docs/docs.db` (tables `docs`, `chunks` with an int8 `vec` column, the FTS5 table
-  `fts`, `concepts` (with an int8 name vector), `mentions`, `links`, `rules`, `aliases`, `meta`) plus the pictures
+  `fts` (columns `body` and `stem`), `concepts` (with an int8 name vector), `mentions`, `links`, `rules`, `aliases`,
+  `cards`, `meta`) plus the pictures
   in `data/docs/assets/<doc>/`.
 - `fold()` (lower case, ı = i, accents removed) and `lower()` (lower case that keeps Turkish letters whole);
-  `stem()` (one Turkish case, plural or possessive suffix, or an English plural s), `concept_key()` (folded, a suffix
+  `stem()` (Turkish: one case, plural or possessive suffix, one final vowel, consonant softening undone; English:
+  Snowball), `concept_key()` (folded, a suffix
   after an apostrophe removed, each word stemmed; identifiers and acronyms exact), `stemmed()`.
 - `passages(md, limit)`: splits converted Markdown along headings into text passages (paragraphs whole, up to
   `BRAIN_DOC_CHUNK_CHARS`), table passages (40 rows, header repeated) and picture passages (alt text and caption),
@@ -130,11 +132,28 @@ The document engine ([ADR-002](decisions/ADR-002-document-graph.md)); no model c
 - `search()`: FTS5 BM25 over the folded keywords and phrases, passage vectors (the query embedding is shared with the
   code search), concept matches, fused by reciprocal rank; returns passages (`source` = document › section, page;
   `doc`; `kind`; `matched`; `similarity`), the rules in them, concepts with definitions and aliases, and facts
-  (sentences naming two concepts); `concept_vectors()` gives search the concept vectors for the concept → code links.
+  (sentences naming two concepts); the concept list comes from `_ppr()` (Personalized PageRank over the
+  passage-concept graph built by `_mentions()`, cached until the index changes); `concept_vectors()` gives search the
+  concept vectors for the concept → code links.
+- Document cards and themes (no model): `doc_facts()` (dates, effective date, versions, document numbers),
+  `central_sentences()` (LexRank over TF-IDF of stemmed words), `minhash()` (near-identical documents), `_card()`,
+  `cards()` (with `superseded_by` and `versions_of`, cached until the index changes), `themes()` (label propagation
+  over the concept co-occurrence graph, named by the most mentioned concepts).
 - `graph()`, `labels()`: concepts named in at least two passages (in a small library all of them), the documents
   that name them, related concepts and document links; `delete()` removes everything derived, including pictures,
   the original and the Markdown; `reindex()` converts and indexes every original again; `documents()`,
   `pipeline()`, `markdown()`.
+
+## 8b. brain/providers/docgrammar.py
+The document grammar ([ADR-029](decisions/ADR-029-document-grammar.md)): `normalize_lines()` (inline article, paragraph
+and item markers of PDF text start a new line), `parse_units()` (parts, chapters, articles, numbered sections,
+paragraphs, items, sub-items, annexes, requirement IDs; keys such as `art:5/par:2/ite:b`, `sec:4.3`, `req:REQ-004`),
+`unit_keys()` (what a person types → keys), `find_refs()` (internal, requirement, law and standard references),
+`find_definitions()`, `amendment()`, `core()`, `parse_statement()` (modality with RFC 2119, actor, action, object,
+condition, exception, confidence; Turkish: "tarafından", passive verbs, predicates such as "zorunludur"; user stories)
+and `gherkin()` (Given / When / Then). In the engine, `_grammar()` stores units, references (and a "reference" concept
+per resolved reference, so PageRank follows them), definitions and statement slots; `doc_query()` answers the `doc`
+tool.
 
 ## 9. brain/providers/convert.py
 Every document becomes Markdown, following the idea of Microsoft's MarkItDown ([ADR-019](decisions/ADR-019-everything-to-markdown.md)):

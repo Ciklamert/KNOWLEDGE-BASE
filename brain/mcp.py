@@ -29,28 +29,28 @@ def _tool(name: str, desc: str, props: dict, required: list[str], scope: bool = 
 
 
 TOOLS = [
-    _tool("search", "Ranked code (graph + vectors) and documents for a question in any language, no LLM. Each hit: "
-                    "location, signature, callers, callees, why. detail: brief (no source), normal, full.",
+    _tool("search", "Ranked code (graph + vectors) and documents, any language, no LLM. Hits: location, signature, "
+                    "callers, callees, why. detail: brief, normal, full.",
           {"query": _S, "scope": {"type": "string", "enum": ["all", "code", "semantic", "docs"]},
            "detail": {"type": "string", "enum": ["brief", "normal", "full"]}, "k": _I, **BRANCH}, ["query"]),
-    _tool("symbol", "A symbol by name: location, signature, source, callers, callees, other matches.",
+    _tool("symbol", "A symbol: location, signature, source, callers, callees.",
           {"name": _S, "source": {"type": "string", "enum": ["auto", "full", "none"]}, **BRANCH}, ["name"]),
     _tool("outline", "Declarations of a file with line ranges; read it before the file.",
           {"path": _S}, ["path"]),
     _tool("read", "Numbered lines of a file (max 400); repo optional.",
           {"path": _S, "start": _I, "end": _I}, ["path"]),
-    _tool("grep", "Exact text or regex, ranked by the code graph. mode: files (paths only), matches, full.",
+    _tool("grep", "Exact text or regex, ranked by the code graph. mode: files, matches, full.",
           {"pattern": _S, "regex": _B, "mode": {"type": "string", "enum": ["files", "matches", "full"]},
-           "file_pattern": {"type": "string", "description": "e.g. *.java"}, "path": {"type": "string", "description": "folder"}},
+           "file_pattern": _S, "path": _S},
           ["pattern"]),
     _tool("files", "Indexed file paths matching a glob, e.g. **/*.sql.", {"pattern": _S}, ["pattern"]),
     _tool("trace", "Call chain of a function.",
           {"function_name": _S, "direction": {"type": "string", "enum": ["inbound", "outbound", "both"]},
            "depth": _I}, ["function_name"]),
-    _tool("impact", "What a change to files or symbols reaches (no LLM): dependants, routes, tests, rules.",
+    _tool("impact", "What changing files or symbols reaches (no LLM): dependants, routes, tests, rules.",
           {"files": {"type": "array", "items": _S}, "symbols": {"type": "array", "items": _S}, "depth": _I,
            **BRANCH}, []),
-    _tool("overview", "A repository's structure: packages, entry points, routes, hotspots, file tree.",
+    _tool("overview", "Repository structure: packages, entry points, routes, hotspots, tree.",
           {"repo": _S, "path": {"type": "string", "description": "folder"},
            "aspects": {"type": "array", "items": {"type": "string", "enum": [
                "overview", "structure", "routes", "hotspots", "entry_points", "dependencies", "layers", "file_tree"]}}},
@@ -61,23 +61,25 @@ TOOLS = [
                             "base_commit/changed_files add branch warnings.",
           {"prompt": _S, "base_commit": _S,
            "changed_files": {"type": "array", "items": _S}, "model": _S, **BRANCH}, ["prompt"]),
-    _tool("write_requirements", "Software requirements in a format the user saved, checked against code and documents "
-                                "(slow). topic: system requirements, a new idea or a topic of the current system.",
+    _tool("write_requirements", "Software requirements in a saved format, checked against code and documents (slow). "
+                                "topic: system requirements, an idea or a topic.",
           {"topic": _S, "template": _S, "language": _S,
            "model": _S}, ["topic"]),
-    _tool("check_branch", "Your branch vs the indexed main: commits behind, conflict-risk files, tests, what to do. "
+    _tool("check_branch", "Branch vs indexed main: behind, conflict-risk files, tests, what to do. "
                           "base_commit: git merge-base HEAD origin/main; changed_files: git diff --name-only "
                           "origin/main...HEAD + uncommitted.",
           {"repo": _S, "branch": _S, "base_commit": _S, "head_commit": _S, "changed_files": {"type": "array", "items": _S}},
           ["repo"], scope=False),
     _tool("list_repos", "Repositories, sets, indexed commits, branch overlays.", {}, [], scope=False),
-    _tool("list_documents", "Documents and their processing status.", {}, [], scope=False),
-    _tool("remember", "Keep a decision, rule, gotcha or convention for later sessions (same type+title replaces).",
+    _tool("doc", "Documents as trees, no LLM. q: unit (Madde 5 (2), 3.1, REQ-004), term (define) or actor (obligations).",
+          {"mode": {"type": "string", "enum": ["list", "outline", "unit", "refs", "define", "obligations", "impact"]},
+           "document": _S, "q": _S}, ["mode"], scope=False),
+    _tool("remember", "Keep a decision, rule, gotcha or convention for later sessions; same type+title replaces.",
           {"type": {"type": "string", "enum": list(memory.TYPES)}, "title": _S, "text": _S, "repo": _S,
            "paths": {"type": "array", "items": _S}}, ["type", "title", "text"], scope=False),
-    _tool("recall", "Facts kept with remember, newest first or by query.",
+    _tool("recall", "Facts kept with remember, newest or by query.",
           {"query": _S, "repo": _S, "type": _S}, [], scope=False),
-    _tool("sync_repo", "Update and re-index a repository (or all) in the background.", {"repo": _S}, [], scope=False),
+    _tool("sync_repo", "Update and re-index a repository (or all).", {"repo": _S}, [], scope=False),
 ]
 CODE_TOOLS = ("symbol", "outline", "read", "grep", "files", "trace", "overview")
 
@@ -115,8 +117,12 @@ def call_tool(name: str, a: dict) -> str:
                          + (f"; overlays: {', '.join(b['branch'] for b in r['branches'])}" if r["branches"] else "")
                          + (f"; error: {r['error']}" if r["error"] else "")
                          for r in repos.overview()) or "No repositories configured."
-    if name == "list_documents":
-        return "\n".join(f"{d['id']}  {d['status']:<10} {d['name']}" for d in providers.docs().documents()) or "No documents."
+    if name == "doc":
+        query = getattr(providers.docs(), "doc_query", None)
+        if not query:
+            return "this document engine has no document tree"
+        q = a.get("q")
+        return query(a.get("mode") or "list", a.get("document"), unit=q, term=q, actor=q)["text"]
     if name == "remember":
         m = memory.remember(a["type"], a["title"], a["text"], a.get("repo"), a.get("paths"), "agent")
         return f"{'replaced' if m['replaced'] else 'recorded'}: [{m['type']}] {m['title']}"

@@ -25,7 +25,9 @@ codebase-memory-mcp:
 1. **Structure**: every document becomes Markdown with its pictures (ADR-019) and is split along its headings into
    passages: text (paragraphs kept whole), tables (40 rows per passage, header repeated) and pictures, each with its
    section path and page number.
-2. **Keywords**: SQLite FTS5 (BM25) over the passages, with Turkish and English diacritics folded (ş = s, ı = i).
+2. **Keywords**: SQLite FTS5 (BM25) over the passages, with Turkish and English diacritics folded (ş = s, ı = i), in
+   two columns: exact and stemmed. Turkish stems come from own suffix rules; measured on 112 forms of official-document
+   nouns they split none apart, while Snowball's Turkish stemmer split 22 (it is used for English only).
 3. **Vectors**: one embedding per passage with the corporate embedding model, in batches, stored as int8.
 4. **Concepts** (the LazyGraphRAG idea): multi-word names in capitals, acronyms, code identifiers, quoted terms,
    glossary entries ("Term: definition", two-column glossary tables) and phrases repeated in a document, in any
@@ -39,9 +41,15 @@ codebase-memory-mcp:
    them through the stored code vectors. No chat call.
 5. **Pictures**: embedded images, scanned pages and drawn charts are described by the vision model
    (`BRAIN_VLM_MODEL`) after the text is searchable: one call per picture, never one per chunk.
-6. **Search** without a chat call: BM25 + passage vectors + concept graph, fused by reciprocal rank; the result has
+6. **Search** without a chat call: BM25 + passage vectors + concept graph, fused by reciprocal rank. The concept
+   graph is searched with Personalized PageRank (HippoRAG, LinearRAG, SPRIG): mass starts at the question's concepts
+   and the best keyword and vector passages and flows passage → concept → passage, so passages linked through a
+   shared concept are found even when they share no word with the question; the result has
    the passages with document, section and page, the rules in them, the concepts with their definitions, aliases and
    implementing code, and facts (sentences that join two concepts).
+6b. **Document cards**: per document its central sentences (LexRank), dates, effective date, versions and document
+   numbers; near-identical documents (MinHash) are versions of each other, and older versions are flagged and rank
+   lower. **Themes**: communities of the concept graph (label propagation), named by their top concepts.
 7. Everything is one SQLite file (`data/docs/docs.db`) plus `data/docs/assets/`. No child process, no port, no
    extra Python package.
 
@@ -55,6 +63,8 @@ codebase-memory-mcp:
 | a vector store only (no structure, no concepts) | loses sections, pages, tables and the links between documents and terms |
 | knowledge-rag (ChromaDB + FastEmbed MCP server) | the closest open-source engine; adds ChromaDB, an ONNX runtime and downloaded models, no concept graph, PDF without tables or pictures |
 | DocuGraph MCP, kb-index, kb-mcp | PDF only or Markdown only; no Office conversion, tables or pictures |
+| txtai + kb-mcp-server | a similarity graph with topics instead of concepts and rules; torch or LiteLLM and downloaded models |
+| LinearRAG as is | English spaCy transformer NER and local embeddings (torch); its retrieval idea is adopted instead |
 
 The full comparison is in [18-ENGINE-COMPARISON.md](../18-ENGINE-COMPARISON.md) section 6.
 

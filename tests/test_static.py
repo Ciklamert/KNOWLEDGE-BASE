@@ -222,14 +222,28 @@ def main():
     eng.upload("refund.md", b"# Refund\nThe Payment Gateway retries. See the Kurallar document.\n")
     r = eng.search("iade onayı", ["iade", "onayı"], 3, 5, ["iade onayı"])
     check("document search: keywords and concepts", r["chunks"] and r["chunks"][0]["doc"] == "kurallar.md"
-          and "concepts" in r["chunks"][0]["matched"] and any(e["name"] == "iade onayı" for e in r["entities"]), r)
+          and "concept graph" in r["chunks"][0]["matched"] and any(e["name"] == "iade onayı" for e in r["entities"]), r)
     g = eng.graph("*", 50, 1)
     check("document graph: documents, concepts, links", any(n["kind"] == "document" for n in g["nodes"])
           and any(l["type"] == "refers to" for l in g["links"]), g)
+    # multi-hop through a shared concept (Personalized PageRank): the second passage shares no word with the question
+    eng.upload("atlas.md", b"# Atlas\nProject Atlas is run by the Settlement Desk.\n")
+    eng.upload("desk.md", b"# Desk\nThe Settlement Desk approves every chargeback within two days.\n")
+    r = eng.search("Project Atlas", ["project", "atlas"], 4, 5, ["project atlas"])
+    check("multi-hop: a passage reached only through a shared concept",
+          any(c["doc"] == "desk.md" and "concept graph" in c["matched"] and "keywords" not in c["matched"] for c in r["chunks"]),
+          [(c["doc"], c["matched"]) for c in r["chunks"]])
 
     # document understanding without a model: word forms, rules and limits, table rows, aliases by meaning
-    check("Turkish word forms share one stem", {dg.concept_key(w) for w in ("iadeler", "iadesi", "iadenin", "iadeyi")} == {"iade"}
-          and dg.concept_key("KDV'nin", True, "acronym") == "kdv" and dg.concept_key("Refunds", False) == "refund")
+    families = {"onay": "onay onayı onaylar onayları onayının onaya onaydan", "iade": "iade iadeler iadesi iadenin iadeyi iadeden",
+                "müşteri": "müşteri müşteriler müşterinin müşteriye müşterisi", "talep": "talep talebi talepler talebin",
+                "hesap": "hesap hesabı hesaplar hesaba", "kart": "kart kartı kartlar karta", "ödeme": "ödeme ödemeler ödemesi ödemeye",
+                "yönetmelik": "yönetmelik yönetmeliği yönetmelikler yönetmeliğin", "ona": "ona", "kurum": "kurum kurumu kurumlar"}
+    stems = {k: {dg.concept_key(w) for w in v.split()} for k, v in families.items()}
+    check("Turkish word forms share one stem; different words stay apart",
+          all(len(x) == 1 for x in stems.values()) and len({next(iter(x)) for x in stems.values()}) == len(stems)
+          and dg.concept_key("KDV'nin", True, "acronym") == "kdv" and dg.concept_key("Refunds", False) == "refund"
+          and dg.concept_key("approved", False) == dg.concept_key("approval", False), stems)
     rules = dg.rules_in("text", "- 5.000 TL üzeri iadeler için müdür onayı zorunludur.\nKartla ödenen faturalar nakit iade "
                                 "edilemez.\nRefunds over 1,000 EUR must be approved within 3 business days.\nBu belge süreci anlatır.")
     check("rules: obligation, prohibition, limits; plain sentences skipped",
@@ -242,7 +256,10 @@ def main():
                                      "içindedir. 5.000 TL üzeri iadeler için müdür onayı zorunludur.\n").encode())
     eng.upload("refunds.md", b"# Refunds\nRefund Approval is recorded by the Payment Gateway.\n")
     keys = {r["key"] for r in eng._q("SELECT key FROM concepts")}
-    check("one concept for every word form", "iade onayi" in keys and "iade onayinin" not in keys, sorted(keys))
+    check("one concept for every word form", "iade onay" in keys and not any(k.startswith("iade onayin") for k in keys), sorted(keys))
+    r = eng.search("onaylar", ["onaylar"], 3, 5, [])
+    check("keyword search matches other word forms (stemmed column)", any(c["doc"] == "iade-kurallari.md" for c in r["chunks"]),
+          [c["doc"] for c in r["chunks"]])
     r = eng.search("müdür onayı zorunlu mu", ["müdür", "onayı", "zorunlu"], 3, 5, [])
     check("search returns the business rules with their limits",
           any(x["modality"] == "obligation" and "5.000 TL üzeri" in x["limits"] for x in r["rules"]), r["rules"])
@@ -264,6 +281,72 @@ def main():
     check("aliases: a Turkish and an English concept that mean the same are joined",
           any(dg.fold(a) == "iade onayi" for a in (ent.get("Refund Approval", {}).get("aliases") or []))
           and any(c["doc"] == "iade-kurallari.md" for c in r["chunks"]), (ent, [c["doc"] for c in r["chunks"]]))
+
+    # document cards: key sentences, dates, versions, numbers, other versions; themes
+    base = ("# İade Prosedürü\nDoküman No: PRC-012\nVersiyon 1.0\nYürürlük tarihi: 01.03.2024\n\n## Amaç\nBu prosedür müşteri "
+            "iadelerinin nasıl yapılacağını tanımlar. Şube müdürü 5.000 TL üzeri iadeleri onaylamalıdır. İade talepleri en geç 3 iş "
+            "günü içinde yanıtlanmalıdır. Kartla yapılan ödemeler nakit olarak iade edilemez. Müşteri bilgileri üçüncü kişilerle "
+            "paylaşılmamalıdır. İade kayıtları muhasebe sistemine aynı gün girilir.\n")
+    eng.upload("prc-v1.md", base.encode())
+    eng.upload("prc-v2.md", base.replace("Versiyon 1.0", "Versiyon 2.0").replace("01.03.2024", "15.09.2025").encode())
+    docs = {d["name"]: d for d in eng.documents()}
+    check("document card: version, effective date, newer version found",
+          docs["prc-v1.md"]["versions"] == ["1.0"] and docs["prc-v1.md"]["effective"] == "2024-03-01"
+          and docs["prc-v1.md"]["superseded_by"] == "prc-v2.md" and docs["prc-v2.md"]["superseded_by"] is None, docs.get("prc-v1.md"))
+    card = next(c for c in eng.cards().values() if c["name"] == "prc-v2.md")
+    check("document card: key sentences and document number", len(card["summary"]) == 4 and card["numbers"] == ["PRC-012"], card)
+    r = eng.search("PRC-012 iade prosedürü şube müdürü", ["PRC-012", "prosedürü", "şube", "müdürü"], 6, 5, [])
+    order = [c["doc"] for c in r["chunks"]]
+    check("the current version ranks above the older one, which says so",
+          "prc-v2.md" in order and "prc-v1.md" in order and order.index("prc-v2.md") < order.index("prc-v1.md")
+          and all(c.get("note") == "older version; newer: prc-v2.md" for c in r["chunks"] if c["doc"] == "prc-v1.md"),
+          [(c["doc"], c.get("note")) for c in r["chunks"]])
+    check("themes across documents", any("prc-v1.md" in t["documents"] for t in eng.themes()), eng.themes())
+
+    # document grammar: the unit tree, references, definitions and statements of official and technical documents
+    from brain.providers import docgrammar as gr
+    reg = ("# Bilgi Güvenliği Yönetmeliği\n\nBİRİNCİ BÖLÜM\nGenel Hükümler\n\nMADDE 1 – Tanımlar\n(1) Bu Yönetmelikte geçen;\n"
+           "a) BGYS: Bilgi Güvenliği Yönetim Sistemini,\nb) Sistem sahibi: Bir bilgi sisteminden sorumlu birim yöneticisini,\n"
+           "ifade eder.\n\nİKİNCİ BÖLÜM\nErişim\n\nMADDE 2 – Erişim yetkileri\n(1) Sistem sahibi, erişim taleplerini en geç 2 iş "
+           "günü içinde onaylamalıdır.\n(2) Ayrıcalıklı hesaplar için iki faktörlü kimlik doğrulama zorunludur.\n\nMADDE 3 – Denetim\n"
+           "(1) 2 nci maddenin (2) numaralı fıkrasına aykırılık halinde olay kaydı açılır.\n(2) Kayıtlar 6698 sayılı Kişisel Verilerin "
+           "Korunması Kanunu ve ISO/IEC 27001 hükümlerine uygun saklanır.\n\nGEÇİCİ MADDE 1 – (1) Mevcut hesaplar 2 nci maddeye uygun "
+           "hale getirilir.\n")
+    keys = {u["key"]: u for u in gr.parse_units(reg)}
+    check("grammar: chapters, articles, paragraphs, items, provisional articles",
+          {"chapter:1", "chapter:2", "art:1/par:1/ite:a", "art:2/par:2", "art:3/par:1", "art:gecici1"} <= set(keys)
+          and keys["art:2/par:2"]["path"] == "Bölüm 2 › Madde 2 › (2)", sorted(keys))
+    refs = {r["key"] for r in gr.find_refs("2 nci maddenin (2) numaralı fıkrasına göre; birinci fıkranın (a) bendi; Section 3.1(a); "
+                                           "REQ-004; 6698 sayılı Kişisel Verilerin Korunması Kanunu; ISO/IEC 27001", {"article": "art:3"})}
+    check("grammar: references to articles, paragraphs, items, sections, requirements, laws, standards",
+          {"art:2/par:2", "art:3/par:1/ite:a", "sec:3.1/ite:a", "req:REQ-004", "law:6698", "std:ISO/IEC 27001"} <= refs, refs)
+    styles = {u["key"] for u in gr.parse_units("# X\n\n**4.3 Acil değişiklik**\nMetin.\n\nARTICLE 2 SERVICE LEVELS\nSection 2.01 The "
+                                                "Provider shall keep availability.\n\nA. Purpose\nText.\n")}
+    check("grammar: bold numbered paragraphs, contract clauses (Section 2.01), lettered headings",
+          {"sec:4.3", "art:2", "sec:2.01", "sec:A"} <= styles, styles)
+    check("grammar: what people type finds the unit", gr.unit_keys("madde 5 (2) b")[0] == "art:5/par:2/ite:b"
+          and gr.unit_keys("Section 3.1") == ["sec:3.1", "art:3.1"] and gr.unit_keys("REQ-004") == ["req:REQ-004"])
+    en = gr.parse_statement("REQ-003: If the PSP is unavailable, the system SHOULD queue the payment, except for refunds.", False)
+    tr = gr.parse_statement("(1) Sistem sahibi, erişim taleplerini en geç 2 iş günü içinde onaylamalıdır.", True, "obligation")
+    pas = gr.parse_statement("Kayıtlar beş yıl saklanır.", True, "obligation")
+    story = gr.parse_statement("As a merchant, I want to see refund status so that I can answer customers.", False)
+    check("grammar: statement slots (RFC 2119, condition, exception, Turkish actor, passive, user story)",
+          (en["modality"], en["actor"], en["action"], en["condition"], en["exception"]) ==
+          ("recommendation", "system", "queue", "If the PSP is unavailable", "except for refunds")
+          and (tr["actor"], tr["action"]) == ("Sistem sahibi", "onayla") and pas["actor"] is None and pas["action"] == "saklan"
+          and (story["kind"], story["actor"]) == ("story", "merchant"), (en, tr, pas, story))
+    acc = gr.gherkin(["Given a refund above 1,000 EUR", "When the manager approves it", "Then the refund is sent within 1 hour"])
+    check("grammar: Given / When / Then becomes an acceptance criterion with its condition",
+          len(acc) == 1 and acc[0]["condition"] == "a refund above 1,000 EUR; the manager approves it", acc)
+    eng.upload("bgy.md", reg.encode())
+    out = eng.doc_query("outline", "bgy.md")["text"]
+    unit = eng.doc_query("unit", None, unit="Madde 2 (2)")["text"]
+    define = eng.doc_query("define", term="BGYS")["text"]
+    duties = eng.doc_query("obligations", actor="sistem sahibi")["text"]
+    check("doc tool: outline, unit with the units that refer to it, definition, an actor's obligations",
+          "Madde 2" in out and "(2)" in out and "referred to by: Bölüm 2 › Madde 3 › (1)" in unit
+          and "Bilgi Güvenliği Yönetim Sistemini" in define and "Sistem sahibi" in duties and "onayla" in duties,
+          (out, unit, define, duties))
 
     # decision memory: typed, dated, searchable, replaced by topic, stale when its code disappears
     from brain import memory, providers as prov

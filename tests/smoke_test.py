@@ -169,8 +169,8 @@ def main():
                              "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t"}}}).json()
     check("MCP initialize", r["result"]["serverInfo"]["name"] == "ai-brain")
     tools = [t["name"] for t in m.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"}).json()["result"]["tools"]]
-    check("MCP tools/list", {"search", "ask", "enhance_prompt", "check_branch", "impact", "remember", "recall"} <= set(tools)
-          and "add_note" not in tools, tools)
+    check("MCP tools/list", {"search", "ask", "enhance_prompt", "check_branch", "impact", "remember", "recall", "doc"} <= set(tools)
+          and "add_note" not in tools and "list_documents" not in tools, tools)
     r = m.post("/mcp", json={"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                              "params": {"name": "search", "arguments": {"query": "apply vat"}}}).json()
     check("MCP tools/call search", not r["result"]["isError"] and "apply_vat" in r["result"]["content"][0]["text"],
@@ -220,6 +220,21 @@ def main():
     mem = c.get("/api/memory").json()["memories"]
     check("memory listed", len(mem) == 1 and mem[0]["stale"] == [], mem)
     check("memory forgotten", ui.delete(f"/api/memory/{mem[0]['name']}").status_code == 200 and c.get("/api/memory").json()["memories"] == [])
+
+    # ---- document tree (grammar)
+    policy = ("# Erişim Yönetmeliği\n\nMADDE 1 – Erişim\n(1) Sistem sahibi, erişim taleplerini en geç 2 iş günü içinde onaylamalıdır.\n"
+              "(2) Ayrıcalıklı hesaplar için iki faktörlü doğrulama zorunludur.\n\nMADDE 2 – Denetim\n(1) 1 inci maddenin (2) numaralı "
+              "fıkrasına aykırılık halinde olay kaydı açılır.\n")
+    j = wait_job(ui, ui.post("/api/docs/upload", files={"files": ("erisim.md", policy.encode("utf-8"), "text/markdown")}).json()["job"])
+    r = c.get("/api/docs/doc", params={"mode": "unit", "document": "erisim.md", "unit": "Madde 1 (2)"}).json()
+    check("REST doc unit: text and the unit that refers to it", j["state"] == "done" and "zorunludur" in r["text"]
+          and "Madde 2 › (1)" in r["text"], r.get("text", "")[:300])
+    text, err = mcp_call("doc", {"mode": "outline", "document": "erisim.md"})
+    check("MCP doc outline", not err and "Madde 1" in text and "(2)" in text, text[:300])
+    text, err = mcp_call("doc", {"mode": "obligations", "q": "sistem sahibi"})
+    check("MCP doc obligations of an actor", not err and "Sistem sahibi" in text, text[:300])
+    doc_id = next(d["id"] for d in c.get("/api/docs").json()["documents"] if d["name"] == "erisim.md")
+    ui.delete(f"/api/docs/{doc_id}")
 
     r = c.get("/api/code/files", params={"pattern": "*.ts", "target": f"repo:{a.repo}"}).json()
     check("REST files", any(f.endswith("api.ts") for f in r["files"]), r)

@@ -557,6 +557,32 @@ async def doc_graph(label: str = "*", max_nodes: int = 600, depth: int = 3):
     return await _run(providers.docs().graph, label, min(max_nodes, 3000), min(depth, 6))
 
 
+@app.get("/api/docs/themes")
+async def doc_themes(limit: int = 20):
+    """Themes across the library (communities of the concept graph) with their documents; no model call."""
+    get = getattr(providers.docs(), "themes", None)
+    return {"themes": await _run(get, min(limit, 100)) if get else []}
+
+
+@app.get("/api/docs/doc")
+async def doc_tree(mode: str = "list", document: str = "", unit: str = "", term: str = "", actor: str = "", q: str = ""):
+    """The document grammar: list | outline | unit | refs | define | obligations | impact (no model call)."""
+    query = getattr(providers.docs(), "doc_query", None)
+    if not query:
+        raise HTTPException(400, "this document engine has no document tree")
+    return await _run(query, mode, document or None, unit or None, term or None, actor or None, q or None)
+
+
+@app.get("/api/docs/card")
+async def doc_card(name: str):
+    """A document's card: central sentences, dates, effective date, versions, numbers, other versions."""
+    get = getattr(providers.docs(), "cards", None)
+    card = next((c for c in (await _run(get)).values() if c["name"] == name), None) if get else None
+    if card is None:
+        raise HTTPException(404, f"no card for {name}")
+    return {k: v for k, v in card.items() if k != "near"}
+
+
 @app.get("/api/docs/labels")
 async def doc_labels(q: str = ""):
     return await _run(providers.docs().labels, q)

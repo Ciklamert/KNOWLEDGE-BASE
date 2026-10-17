@@ -27,7 +27,7 @@ indexed (on `search`, `symbol`, `ask`, `enhance_prompt`).
 | `write_requirements` | `topic` (system requirements, a new idea or a topic of the current system), `template` (one of the user's formats), `language`, `model` | a Software Requirements Specification in plain language in the user's format (slow) | a document |
 | `check_branch` | `repo`, `branch`, `base_commit`, `head_commit`, `changed_files` | branch drift report with recommendations | small |
 | `list_repos` | | one line per repository: provider, branch, sets, indexed commit, symbols, overlays, errors | small |
-| `list_documents` | | documents and their processing status | small |
+| `doc` | `mode` (`list`, `outline`, `unit`, `refs`, `define`, `obligations`, `impact`), `document`, `q` (a unit such as "Madde 5 (2)", "3.1", "REQ-004"; a term; an actor) | documents as trees, no model call: the documents with versions; a document's outline; one unit's text with what it refers to and what refers to it; a term's definition and where it is used; an actor's obligations, prohibitions and permissions with conditions and limits; what depends on a unit | small |
 | `remember` | `type` (`decision`, `rule`, `gotcha`, `convention`), `title`, `text`, `repo`, `paths` | keep a lasting fact for every later session; searchable like a document; the same type and title replaces the older one | one line |
 | `recall` | `query`, `repo`, `type` | the facts recorded earlier, newest first or ranked for the query; stale ones are marked | small |
 | `sync_repo` | `repo` (empty = all) | update and re-index in the background | small |

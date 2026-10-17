@@ -48,6 +48,7 @@ Otherwise pick the cheapest tool that answers the next question:
 - a file: `outline` first (declarations with line ranges), then `read` only the lines you need;
 - exact text or regex: `grep` (mode=files to only locate); file paths by glob: `files`;
 - new concepts: `search` (detail=brief to scan widely), `semantic` (code by meaning), `docs` (documents only);
+- a document's articles, sections or requirements, a term's definition, who must do what: `doc`;
 - a repository's structure: `overview`.
 Use repo=... to target one repository. Stop calling tools as soon as you can answer well.
 </tool_use>"""
@@ -151,6 +152,9 @@ TOOLS = [
         ["function_name"]),
     _fn("impact", "What a change reaches: dependants, entry points, tests to run, business rules.",
         {"files": {"type": "array", "items": _S}, "symbols": {"type": "array", "items": _S}, "repo": _S}, []),
+    _fn("doc", "A document's tree: outline, a unit (Madde 5, 3.1, REQ-004), its references, a term's definition, "
+               "an actor's obligations, what depends on a unit.",
+        {"mode": {"type": "string", "enum": ['list', 'outline', 'unit', 'refs', 'define', 'obligations', 'impact']}, "document": _S, "unit": _S, "term": _S, "actor": _S, "query": _S}, ["mode"]),
     _fn("outline", "Declarations of one file with line ranges.", {"path": _S, "repo": _S}, ["path"]),
     _fn("read", "Numbered lines of a file (max 400).", {"path": _S, "start": _I, "end": _I, "repo": _S}, ["path"]),
     _fn("grep", "Exact text or regex in the code; mode=files lists only the files.",
@@ -253,6 +257,10 @@ class Context:
         if name == "trace":
             return code.tool("trace", {"function_name": a["function_name"], "project": self.project(repo),
                                        "direction": a.get("direction") or "both", "depth": int(a.get("depth") or 3)})
+        if name == "doc":
+            query = getattr(providers.docs(), "doc_query", None)
+            return cap(query(a.get("mode") or "list", a.get("document"), a.get("unit"), a.get("term"), a.get("actor"),
+                             a.get("query"))["text"] if query else "no document tree", "narrow with document=, unit= or actor=")
         if name == "impact":
             return cap(impact(a.get("files"), a.get("symbols"), None if repo else self.set_name,
                               [repo] if repo else self.repo_names, self.branch, int(a.get("depth") or 3))["markdown"],

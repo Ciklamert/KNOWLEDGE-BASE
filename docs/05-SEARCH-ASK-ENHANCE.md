@@ -82,19 +82,30 @@ Every result combines:
 
 ### How the document engine answers
 1. **Keywords**: the key terms, variants and multi-word concepts, folded the way the index is (lower case, ş = s,
-   ı = i), are searched in the SQLite FTS5 index (BM25) over every passage, its section path and its document name.
+   ı = i), and their stems are searched in the SQLite FTS5 index (BM25) over every passage, its section path and its
+   document name. The index has two columns: the exact folded text, and the same text stemmed, so "onaylar" finds
+   "onayı" and "onayının" (Turkish: own suffix rules, measured on 112 forms of official-document nouns with no form
+   split apart; English: Snowball / Porter 2).
 2. **Vectors**: the query embedding (shared with the code search) is compared with every passage vector.
 3. **Concepts**: concepts whose name equals a key term or concept of the question (in any word form: iadeler,
    iadesi and iade are one concept), the concepts nearest to the question by meaning (`BRAIN_CONCEPT_SIM`), and
-   their aliases (concepts that mean the same, such as "iade onayı" and "Refund Approval") lead to the passages that
-   name them (half weight).
+   their aliases (concepts that mean the same, such as "iade onayı" and "Refund Approval") are the seeds of a
+   Personalized PageRank over the passage-concept graph, together with the best keyword and vector passages. Mass
+   flows passage → concept → passage (12 steps, damping 0.5), and a concept named everywhere passes on little. The
+   passages it ranks highest form the third list, so a passage linked to the question through a shared concept is
+   found even when it shares no word with it (multi-hop).
 4. The three lists are fused by reciprocal rank. Each passage carries its document, section path and page
    (`source`, for example `contract.pdf › 4 Payments › 4.2 Refunds, p. 12`), its kind (text, table, picture, figure),
    what found it (`matched`) and its similarity.
 5. **Concepts** (`entities`): the concepts named in these passages, the ones the question names first, each with its
    definition when a glossary or "Term: definition" line gives one.
 6. **Facts** (`relations`): sentences of these passages that name two of those concepts.
-7. **Rules** (`rules`): the requirement sentences of these passages, typed `obligation` ("-malıdır", "zorunludur",
+7. **Documents** (`documents`): the card of each document shown: its most central sentences (LexRank over the
+   stemmed words), version, effective date, and the newer version when one exists. Near-identical documents (MinHash
+   of 5-word shingles, at least half equal) are versions of each other; the one with the higher version number or
+   later date is current. Passages of an older version count half in the ranking and carry `note` ("older version;
+   newer: …").
+8. **Rules** (`rules`): the requirement sentences of these passages, typed `obligation` ("-malıdır", "zorunludur",
    "gerekir", "must", "shall", "need"), `prohibition` ("yasaktır", "edilemez", "-mamalıdır", "must not", "cannot"),
    `recommendation` ("should", "önerilir") or `limit`, each with the limits it states ("5.000 TL üzeri", "en geç 3
    iş günü içinde", "over 1,000 EUR"), and table rows with numbers written with their column names (`value`). The

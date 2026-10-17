@@ -517,10 +517,24 @@ REFRESH.documents = async () => {
       try { await api(`/api/memory/${encodeURIComponent(b.dataset.mem)}`, { method: "DELETE" }); toast("Forgotten") } catch (err) { toast(err.message) }
       REFRESH.documents()
     }))
-    $("#doc-rows").innerHTML = d.documents.filter((x) => !x.name.startsWith("memory-")).map((x) => `<tr><td>${esc(x.name)}${x.error ? `<div class="muted">${esc(x.error).slice(0, 300)}</div>` : ""}</td>
+    $("#doc-rows").innerHTML = d.documents.filter((x) => !x.name.startsWith("memory-")).map((x) => `<tr><td>${esc(x.name)}${x.error ? `<div class="muted">${esc(x.error).slice(0, 300)}</div>` : ""}${x.superseded_by ? `<div class="muted">older version; newer: ${esc(x.superseded_by)}</div>` : ""}</td>
       <td><span class="st ${esc(x.status)}">${esc(x.status)}</span></td><td>${x.chunks ?? ""}</td><td>${x.rules ?? ""}</td><td>${x.vectors ?? ""} / ${x.chunks ?? ""}</td>
-      <td>${x.pictures ? `${x.described} / ${x.pictures}` : "-"}</td><td>${ago(x.updated_at)}</td>
-      <td><button class="ghost small" data-md="${esc(x.name)}" title="The Markdown this document was converted to">Markdown</button> <button class="del" data-id="${esc(x.id)}" data-name="${esc(x.name)}">Remove</button></td></tr>`).join("") || `<tr><td colspan="8" class="muted">No documents yet.</td></tr>`
+      <td>${x.pictures ? `${x.described} / ${x.pictures}` : "-"}</td><td>${esc([(x.versions || [])[0] ? "v" + x.versions[0] : "", x.effective || ""].filter(Boolean).join(" · ") || "-")}</td><td>${ago(x.updated_at)}</td>
+      <td><button class="ghost small" data-outline="${esc(x.name)}" title="The document's articles, sections, requirements and references (no model)">Outline</button> <button class="ghost small" data-card="${esc(x.name)}" title="Key sentences, dates, versions, numbers and other versions (no model)">Card</button> <button class="ghost small" data-md="${esc(x.name)}" title="The Markdown this document was converted to">Markdown</button> <button class="del" data-id="${esc(x.id)}" data-name="${esc(x.name)}">Remove</button></td></tr>`).join("") || `<tr><td colspan="9" class="muted">No documents yet.</td></tr>`
+    $$("#doc-rows [data-outline]").forEach((b) => (b.onclick = async () => {
+      try { const r = await api(`/api/docs/doc?mode=outline&document=${encodeURIComponent(b.dataset.outline)}`); viewer(`${b.dataset.outline} (outline)`, r.text) } catch (err) { toast(err.message) }
+    }))
+    $$("#doc-rows [data-card]").forEach((b) => (b.onclick = async () => {
+      try {
+        const c = await api(`/api/docs/card?name=${encodeURIComponent(b.dataset.card)}`)
+        viewer(`${c.name} (card)`, [`## Key sentences`, ...c.summary.map((x) => `- ${x}`), ``, `## Facts`,
+          `- Effective: ${c.effective || "-"}`, `- Versions: ${c.versions.join(", ") || "-"}`, `- Numbers: ${c.numbers.join(", ") || "-"}`,
+          `- Dates: ${c.dates.join(", ") || "-"}`, `- Other versions: ${c.versions_of.join(", ") || "-"}`,
+          `- Newer version: ${c.superseded_by || "-"}`].join("\n"))
+      } catch (err) { toast(err.message) }
+    }))
+    const th = await api("/api/docs/themes").catch(() => ({ themes: [] }))
+    $("#doc-themes").innerHTML = th.themes.map((t) => `<div><b>${esc(t.label)}</b> <span class="muted">${t.size} concepts · ${t.documents.map(esc).join(", ")}</span></div>`).join("") || `<span class="muted">Themes appear when documents share concepts.</span>`
     $$("#doc-rows [data-md]").forEach((b) => (b.onclick = async () => {
       try { const r = await api(`/api/docs/markdown?name=${encodeURIComponent(b.dataset.md)}`); viewer(b.dataset.md + " (as Markdown)", r.markdown) } catch (err) { toast(err.message) }
     }))

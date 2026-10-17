@@ -1,0 +1,149 @@
+{
+ "vectors": "none (keywords + concepts + PageRank only)",
+ "indexing": {
+  "documents": 12,
+  "passages": 63,
+  "seconds": 1.52,
+  "ms_per_document": 126.3
+ },
+ "retrieval": {
+  "all": {
+   "n": 36,
+   "hit@1": 0.67,
+   "hit@5": 0.89,
+   "mrr": 0.75,
+   "doc@5": 0.89
+  },
+  "lexical": {
+   "n": 16,
+   "hit@1": 0.81,
+   "hit@5": 1.0,
+   "mrr": 0.88,
+   "doc@5": 1.0
+  },
+  "morphology": {
+   "n": 5,
+   "hit@1": 0.8,
+   "hit@5": 1.0,
+   "mrr": 0.87,
+   "doc@5": 1.0
+  },
+  "paraphrase": {
+   "n": 6,
+   "hit@1": 0.33,
+   "hit@5": 1.0,
+   "mrr": 0.6,
+   "doc@5": 1.0
+  },
+  "crosslingual": {
+   "n": 4,
+   "hit@1": 0.0,
+   "hit@5": 0.0,
+   "mrr": 0.0,
+   "doc@5": 0.0
+  },
+  "reference": {
+   "n": 4,
+   "hit@1": 1.0,
+   "hit@5": 1.0,
+   "mrr": 1.0,
+   "doc@5": 1.0
+  },
+  "version": [
+   {
+    "id": "V01",
+    "ok": true
+   }
+  ],
+  "latency_ms": {
+   "p50": 14.6,
+   "max": 33.5
+  },
+  "misses": [
+   {
+    "id": "X01",
+    "q": "How quickly must access requests be approved?",
+    "rank": null,
+    "top": "payments-srs.md"
+   },
+   {
+    "id": "X02",
+    "q": "Within how many hours must a personal data breach be reported to the authority?",
+    "rank": null,
+    "top": "payments-srs.md"
+   },
+   {
+    "id": "X03",
+    "q": "Hata oranı artarsa sürüm ne zaman geri alınmalı?",
+    "rank": null,
+    "top": "api-tasarim-standartlari.md"
+   },
+   {
+    "id": "X04",
+    "q": "How long are camera recordings kept?",
+    "rank": null,
+    "top": "access-control-policy.docx"
+   }
+  ]
+ },
+ "doc_tool": {
+  "passed": 17,
+  "n": 17,
+  "failures": []
+ },
+ "grammar": {
+  "units_recall": "77/77",
+  "units_missing": [],
+  "numbered_units_precision": "77/77",
+  "units_extra": [],
+  "references_resolved": "7/7",
+  "references_missing": [],
+  "definitions_found": "12/12",
+  "definitions_missing": [],
+  "statements": {
+   "modality": "22/22",
+   "actor": "21/22",
+   "action": "21/22",
+   "found": "22/22"
+  },
+  "statement_errors": [
+   {
+    "text": "erişim taleplerini en geç 2 iş günü",
+    "got": {
+     "modality": "obligation",
+     "actor": "Sistem sahibi",
+     "action": "reddet"
+    },
+    "wrong": [
+     "action"
+    ]
+   },
+   {
+    "text": "kendi isteğini onaylayamaz",
+    "got": {
+     "modality": "prohibition",
+     "actor": "Birleştirme",
+     "action": "onaylay"
+    },
+    "wrong": [
+     "actor"
+    ]
+   }
+  ]
+ },
+ "robustness": {
+  "plain-paragraphs.docx": "11/11",
+  "contract.md": "8/8",
+  "lettered.md": "2/2"
+ },
+ "scale": {
+  "documents": 372,
+  "added": 360,
+  "passages_added": 1890,
+  "seconds": 24.2,
+  "documents_per_second": 14.9,
+  "passages_per_second": 78.0,
+  "search_ms_p50": 15.8,
+  "search_ms_max": 125.3
+ }
+}

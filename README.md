@@ -38,6 +38,7 @@ MCP or a REST API. The only outbound connection is to the organisation's **OpenA
 | **Enhance prompt** | An agent turns any request (a bug to fix, a new feature, a change, a refactor, an investigation) into an implementation-ready prompt for a coding agent. It recognises the kind of request itself: for a bug it traces the failing path and the likely root cause, for a new feature it shows what exists today, where it fits and what to imitate. Task, what exists, analysis, business rules, impact, plan, acceptance criteria, out of scope, open questions, branch warnings. | expansion + a few |
 | **Impact** | What a change reaches before and after editing: the code that depends on the changed files or symbols, the routes that lead there, the tests to run and the business rules that name the code (MCP `impact`, `POST /api/impact`, `brain impact` in CI). | none |
 | **Decision memory** | Decisions, rules, gotchas and conventions that people and agents should not relearn: typed, dated, searchable like documents, replaced by topic, marked stale when their code is gone (MCP `remember` / `recall`, Documents → *Memory*). | none |
+| **Document tree** | Official and technical documents parsed like code: chapters, articles, paragraphs, numbered sections and requirement IDs; cross-references, definitions, amendments; who must do what, with conditions and limits (MCP and REST `doc`, Documents → *Outline*). | none |
 | **Requirements writer** | Turns system requirements, a new idea or a topic of the current system (pasted or loaded from a file) into software requirements checked against the current code and documents, with one request field and no modes; always in your organisation's own format (typed, or loaded from a Word/PDF template). | several per capability |
 | **Documents** | Every upload becomes Markdown first, the MarkItDown way (PDF with tables and pictures, Word, PowerPoint, Excel, HTML, CSV, JSON, XML, RSS, notebooks, EPUB, e-mails with attachments, zip archives, images, code and text, recognised by content), is split into passages along headings and pages, and is searchable at once: keywords, concepts and links between documents. | one batched embedding pass; one vision call per picture |
 | **Code tools for agents** | `symbol`, `outline`, `read`, `grep`, `files`, `trace`, `overview`: exact answers in a few hundred tokens, across all repositories, without a local checkout. | none |
@@ -90,7 +91,7 @@ documents under **Documents** and connect your agents (`brain connect`). The ful
 ## Requirements at a glance
 
 - Windows 10/11 or Windows Server 2019+ (x64), or Linux x86-64 with glibc 2.17+.
-- Python 3.13 and git. All Python packages are bundled in `wheels/` (41 wheels, about 80 MB).
+- Python 3.13 and git. All Python packages are bundled in `wheels/` (42 wheels, about 80 MB).
 - 4 CPU cores, 8 GB RAM (16 GB for large monorepos), 10 GB disk plus three times the size of the source code.
 - An OpenAI-compatible chat model and embedding model reachable from the server; a vision model is optional.
 
@@ -119,4 +120,4 @@ documents under **Documents** and connect your agents (`brain connect`). The ful
 | [docs/17-REQUIREMENTS-WRITER.md](docs/17-REQUIREMENTS-WRITER.md) | the requirements writer and its formats |
 | [docs/18-ENGINE-COMPARISON.md](docs/18-ENGINE-COMPARISON.md) | the code engine and the document engine compared with open-source alternatives |
 | [docs/19-REVIEW.md](docs/19-REVIEW.md) | review of the whole system, known limits and rating |
-| [docs/decisions/](docs/decisions/README.md) | architecture decision records ADR-001 to ADR-028 |
+| [docs/decisions/](docs/decisions/README.md) | architecture decision records ADR-001 to ADR-029 |

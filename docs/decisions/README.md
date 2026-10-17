@@ -1,7 +1,7 @@
 # Architecture decision records
 
 Each record states the context, the decision, the alternatives considered and the consequences. Requirement numbers
-(R1-R42) refer to [00-REQUIREMENTS.md](../00-REQUIREMENTS.md).
+(R1-R45) refer to [00-REQUIREMENTS.md](../00-REQUIREMENTS.md).
 
 | ADR | Decision |
 |---|---|
@@ -33,3 +33,4 @@ Each record states the context, the decision, the alternatives considered and th
 | [ADR-026](ADR-026-requirements-for-something-new.md) | One requirements writer for system requirements and for the current system |
 | [ADR-027](ADR-027-daily-refresh.md) | Every repository is updated at least every 24 hours |
 | [ADR-028](ADR-028-agent-needs.md) | What autonomous agents need: one-call search, impact and decision memory |
+| [ADR-029](ADR-029-document-grammar.md) | A grammar for official and technical documents (the tree-sitter idea) |

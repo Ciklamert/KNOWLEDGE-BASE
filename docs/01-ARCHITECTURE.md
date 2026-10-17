@@ -46,6 +46,7 @@ server except git traffic to the configured git servers.
 | Authentication | `brain/auth.py` | signed session cookie, bearer token, basic auth, login lock-out |
 | Plug-in contracts | `brain/providers/__init__.py` | `CodeGraph`, `DocGraph`, provider loading by name |
 | Code engine provider | `brain/providers/codebase_memory.py` | indexing, hybrid search, exact names, graph expansion, annotations, `symbol`/`outline`/`read`/`grep`/`files`, impact of a change, UI graphs |
+| Document grammar | `brain/providers/docgrammar.py` | units, references, definitions, amendments and statements of official and technical documents |
 | Document engine | `brain/providers/docgraph.py` | passages, keyword index, vectors, concepts (word forms, aliases), business rules, links, picture descriptions, search, UI graph |
 | Document converter | `brain/providers/convert.py` | every document format → Markdown + pictures (the MarkItDown idea) |
 | Prompt analysis | `brain/query.py` | stop-words, ranked key terms, variants, concepts, language |
@@ -177,4 +178,4 @@ Created at run time: `.venv/`, `.env`, `repos.json`, `data/`.
 4. **Interfaces at the seams.** Engine-specific code lives only in `brain/providers/`.
 5. **Local state only.** SQLite and plain files; a backup is a folder copy.
 6. **Evidence first.** Every answer, prompt and specification is built from search results that are shown with it.
-7. **Small.** About 6,350 lines of Python and a 750-line UI script, 11 direct Python dependencies.
+7. **Small.** About 6,350 lines of Python and a 750-line UI script, 12 direct Python dependencies.

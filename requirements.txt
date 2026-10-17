@@ -14,4 +14,5 @@ python-docx==1.2.0
 python-pptx==1.0.2
 openpyxl==3.1.5
 pillow==12.3.0
+snowballstemmer==3.0.1
 # The code engine (codebase-memory-mcp) is a native binary in bin/; the document engine is part of this server.

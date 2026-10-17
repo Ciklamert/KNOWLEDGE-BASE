@@ -20,7 +20,10 @@ The script exits with the number of failures. It checks:
   extension or with a wrong one recognised by its content; notebook, e-mail with an attachment, zip archive and RSS
   feed converted; PDF page headers and footers removed;
 - the 24-hour update: the right repositories are due (old, failed long ago, never updated);
-- document understanding: Turkish word forms share one concept, rules typed obligation and prohibition with their
+- document understanding: Turkish word families stemmed alike and kept apart from other words, keyword search across
+  word forms, document cards (version, effective date, document number, key sentences, newer version), the current
+  version ranked above the older one, themes; a passage reached only through a shared concept (Personalized PageRank), Turkish word
+  forms share one concept, rules typed obligation and prohibition with their
   limits, table rows with numbers as facts, a Turkish and an English concept joined as aliases by meaning;
 - decision memory: replaced by topic with history, searchable as a document, unknown types rejected, stale when
   its code path is gone, forgotten with its document;
@@ -108,9 +111,9 @@ What it covers:
   requirements by the same writer (no mode).
 
 ## 3. Test record
-Windows 11, Python 3.13.16, codebase-memory-mcp 0.11.0, mock gateway, empty data folder:
-- `setup.ps1 -NonInteractive` built `.venv` and installed every package from `wheels/` (41 wheels) with `--no-index`;
-- all 210 static and 98 end-to-end checks pass; `brain hook` was installed in a checkout, and a `git pull` of `main`
+Windows 11, Python 3.13.6 (python.org installer), codebase-memory-mcp 0.11.0, mock gateway, empty data folder:
+- `setup.ps1 -NonInteractive` built `.venv` and installed every package from `wheels/` (42 wheels) with `--no-index`;
+- all 226 static and 101 end-to-end checks pass (Python 3.13.6); `brain hook` was installed in a checkout, and a `git pull` of `main`
   started an update on the server; cold start to `ready` takes about 12 seconds.
 
 The Linux installer is syntax-checked; it has not been run on a Linux machine. GitLab and TFS were simulated with
@@ -121,3 +124,31 @@ Point the test configuration at the real `BRAIN_LLM_*` and `BRAIN_EMBEDDING_*` v
 structural checks (search, webhooks, drift, overlays, authentication, MCP) do not depend on the model; the ask,
 enhance and requirements checks then depend on the model following instructions. Answer quality has to be judged
 with real questions (see [19-REVIEW.md](19-REVIEW.md) §5).
+
+## 5. Evaluation of the document engine (tests/eval)
+A repeatable, honest test of indexing and search: `python tests/eval/make_corpus.py` builds twelve official documents
+of a fictional technology company (a regulation as PDF, a change procedure in two versions as Word, an access policy
+as Word, a retention schedule as Excel, an SRS, a runbook, standards, an incident plan, meeting notes and a glossary as
+Markdown; Turkish and English). `python tests/eval/run_eval.py` indexes them, asks 36 questions with expected answers
+(`questions.json`), checks 17 doc-tool answers and compares the grammar with hand annotations (`gold.json`), then
+writes `report.json`. `--with-api` adds the corporate embedding model.
+
+Result without any model (keywords, concepts and PageRank only), October 2026:
+
+| Measure | Result |
+|---|---|
+| Retrieval, all 36 questions | hit@1 0.67, hit@5 0.89, MRR 0.75 |
+| lexical (16) / Turkish word forms (5) | hit@5 1.0 / 1.0 |
+| paraphrase (6) | hit@1 0.33, hit@5 1.0 |
+| cross-language (4) | hit@5 0.0 (needs vectors) |
+| references (4), current version first (1) | hit@1 1.0; yes |
+| doc tool answers | 17 / 17 |
+| units / references / definitions | 77/77 / 7/7 / 12/12 |
+| statement slots: modality / actor / action | 22/22 / 21/22 / 21/22 |
+| unseen styles: bold numbers in Word without heading styles / "ARTICLE 1, Section 1.01" contract / lettered headings | 11/11 / 8/8 / 2/2 (first probe before these conventions were added: 0/11 / 3/8 / 0/2) |
+| indexing speed (372 documents) | about 75 passages/s, 14 documents/s (one CPU thread, no model) |
+| search latency | p50 about 16 ms, max about 130 ms |
+
+Limits of this test: the corpus, questions and gold were written by the same author as the grammar, so the
+structural scores are an upper bound for well-formed documents; no real corporate embeddings were available, so
+paraphrase and cross-language results are the keyword-only floor; the corpus is small.

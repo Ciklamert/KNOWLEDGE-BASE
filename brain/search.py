@@ -363,11 +363,19 @@ def render(r: dict, max_chars: int | None = None, detail: str | None = None) -> 
     if d.get("chunks"):
         items.append("## Document passages")
         for c in d["chunks"]:
-            items.append(f"> **{c['source']}**: " + " ".join(c["content"].split())[:n_pass])
+            items.append(f"> **{c['source']}**" + (f" ({c['note']})" if c.get("note") else "") + ": "
+                         + " ".join(c["content"].split())[:n_pass])
+    if d.get("documents"):
+        items.append("## Documents\n" + "\n".join(
+            f"- **{x['name']}**" + (f" v{x['version']}" if x.get("version") else "")
+            + (f", effective {x['effective']}" if x.get("effective") else "")
+            + (f" (older version; newer: {x['superseded_by']})" if x.get("superseded_by") else "")
+            + (f": {' '.join(x['summary'])[:300]}" if x.get("summary") else "") for x in d["documents"]))
     if d.get("rules"):
         items.append("## Business rules\n" + "\n".join(
-            f"- [{x['modality']}] {x['text'][:300]}" + (f" (limits: {', '.join(x['limits'])})" if x.get("limits") else "")
-            + f" · {x['source']}" for x in d["rules"][:n_fact]))
+            f"- [{x['modality']}] " + (f"**{x['actor']}** → {x['action']}: " if x.get("actor") and x.get("action") else "")
+            + f"{x['text'][:300]}" + (f" (limits: {', '.join(x['limits'])})" if x.get("limits") else "")
+            + f" · {x['source']}" + (f" › {x['unit'].split(' › ')[-1]}" if x.get("unit") else "") for x in d["rules"][:n_fact]))
     if d.get("entities"):
         items.append("## Domain entities\n" + "\n".join(
             f"- **{e['name']}** ({e['type']}): {e['description'][:200]}"

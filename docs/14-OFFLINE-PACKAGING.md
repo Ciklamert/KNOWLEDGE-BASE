@@ -7,7 +7,7 @@ The folder is complete: nothing is downloaded during setup or at run time. Copy 
 
 | Part | Shipped as |
 |---|---|
-| Every Python package for **Python 3.13** on **Windows x64 and Linux x86-64** | `wheels/` (41 wheel files, about 80 MB): 11 direct packages and their dependencies |
+| Every Python package for **Python 3.13** on **Windows x64 and Linux x86-64** | `wheels/` (42 wheel files, about 80 MB): 12 direct packages and their dependencies |
 | Code engine: codebase-memory-mcp 0.11.0, including its code-embedding model | `bin/codebase-memory-mcp-windows-amd64.zip`, `bin/codebase-memory-mcp-linux-amd64-portable.tar.gz`, `bin/SHA256SUMS` |
 | Graph library for the UI | `brain/ui/vendor/force-graph.min.js` (MIT, v1.52.0) |
 | Not included: Python 3.13 and git | install them from the organisation's software distribution |

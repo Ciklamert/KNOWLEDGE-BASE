@@ -8,7 +8,7 @@ It ends with the known limits, a rating and the recommended next steps.
 - Every module, the REST and MCP surface, the installers and this documentation were reviewed against each other;
   the static test enforces that every setting, route and MCP tool is documented and that every link works.
 - The end-to-end test runs on Windows 11 with Python 3.13.16 from an empty data folder against the mock gateway, and
-  all 98 checks pass ([15-TESTING.md](15-TESTING.md)).
+  all 101 checks pass ([15-TESTING.md](15-TESTING.md)).
 - The answer sizes below were measured on the test repository through MCP (≈ 4 characters per token).
 
 ## 2. AI agents over MCP: tokens
@@ -91,7 +91,7 @@ code and documents together): weighted for those needs and compared with the alt
 
 | Area | Score (of 10) | Why |
 |---|---|---|
-| Air-gap fit | 10 | 41 wheels, no download, no cloud, one URL and key |
+| Air-gap fit | 10 | 42 wheels, no download, no cloud, one URL and key |
 | Slow-API tolerance | 9 | no chat call while indexing; at most one embedding call per search, never waited for longer than 3 s; agent answers still wait on the model |
 | Coverage: code, meaning, documents, many repositories | 9 | three sources fused; documents with rules, word forms, aliases and links to code |
 | For autonomous agents | 8 | exact tools, impact with tests, decision memory; about 1,500 tokens of tool list per turn |

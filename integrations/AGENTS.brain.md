@@ -15,6 +15,7 @@ decisions). Use it instead of grep, glob and reading whole files; it costs fewer
 | searching by idea, or in Turkish | `search` (`detail=brief` to scan; `scope=docs` for business rules) |
 | planning a bug fix, a new feature or any change | `enhance_prompt` |
 | what a change breaks, which tests to run | `impact` (files or symbols) |
+| an article, section or requirement of a document; a term's definition; who must do what | `doc` (outline, unit, refs, define, obligations) |
 | what earlier sessions decided or learned | `recall` at the start; `remember` what the next session needs |
 
 When the current branch is not `main`: run `git rev-parse --abbrev-ref HEAD`, `git merge-base HEAD origin/main`,
