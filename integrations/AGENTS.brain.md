@@ -18,6 +18,12 @@ decisions). Use it instead of grep, glob and reading whole files; it costs fewer
 | an article, section or requirement of a document; a term's definition; who must do what | `doc` (outline, unit, refs, define, obligations) |
 | what earlier sessions decided or learned | `recall` at the start; `remember` what the next session needs |
 
+At the start of every task, call `recall` with the task in a few words. When a task is done, call `remember` once
+for each thing the next session would otherwise have to rediscover: a `decision` (what was chosen and why), a `rule`
+(a business rule found in code or documents), a `gotcha` (a trap and how to avoid it) or a `convention` (how this
+codebase does things). Give a short title, the text, the `repo` and the code `paths` it concerns. Do not record what
+the code or git history already says.
+
 When the current branch is not `main`: run `git rev-parse --abbrev-ref HEAD`, `git merge-base HEAD origin/main`,
 `git diff --name-only origin/main...HEAD` and `git status --porcelain`, call `check_branch` with the results and follow
 its recommendations. AI-BRAIN describes `main`; for files you changed, trust your working copy.
@@ -32,6 +38,8 @@ curl -s -H "$H" "$BRAIN_URL/api/code/read?path=<path>&start=1&end=120" | jq -r .
 curl -s -H "$H" -H "Content-Type: application/json" -d '{"pattern":"<text>","mode":"files"}' "$BRAIN_URL/api/code/grep" | jq -r .text
 curl -s -H "$H" "$BRAIN_URL/api/code/files?pattern=**/*.sql" | jq -r '.files[]'
 curl -s -H "$H" -H "Content-Type: application/json" -d '{"prompt":"<the user request>"}' "$BRAIN_URL/api/enhance" | jq -r .enhanced
+curl -s -H "$H" "$BRAIN_URL/api/memory?q=<the task in a few words>" | jq -r '.memories[] | "[\(.type)] \(.title): \(.text)"'
+curl -s -H "$H" -H "Content-Type: application/json" -d '{"type":"gotcha","title":"<short title>","text":"<what and why>","repo":"<repo>","paths":["<path>"]}' "$BRAIN_URL/api/memory"
 ```
 Open files locally only to edit them, and check AI-BRAIN's locations in your working copy before editing.
 <!-- ai-brain:end -->
