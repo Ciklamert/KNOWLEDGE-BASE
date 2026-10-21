@@ -113,15 +113,25 @@ or the daily schedule calls `repos.request_sync`, which starts the update at onc
 same repository is being updated makes that update run once more when it finishes. The job brings the checkout to
 the tracked branch (server-managed clone: `fetch` + `checkout -B` + `reset --hard`; local checkout: `pull --ff-only`
 only when clean and on the tracked branch), runs the code engine's incremental index, updates the multilingual code
-vectors of changed symbols, and records the indexed commit in `data/state.json`.
+vectors of changed symbols, records the indexed commit in `data/state.json`, and removes branch overlays whose branch
+no longer exists on the server (`git ls-remote --heads`). Overlays also go when a webhook reports the branch
+deleted, and after `BRAIN_BRANCH_TTL_DAYS` without use ([10](10-BRANCH-DRIFT.md) §2.2).
 
 ### 3.6 Document upload
 UI or REST upload → the original is kept in `data/originals/` → the file is converted to Markdown with its pictures
 (`data/converted/<file>.md` keeps the Markdown) → split along headings into passages (text, tables by rows,
 pictures), with section path and page → keyword index, concepts, document links: the document is **searchable at
 once, without any model call** → in the background: one batched embedding pass for the passage vectors, then the
-vision model describes each picture (when `BRAIN_VLM_MODEL` is set). The **Documents** page shows passages, vectors
-and described pictures per document, updated live.
+pictures: tiny or one-colour ones are skipped, a picture seen before (same bytes) reuses its description, the others
+are described by the vision model (`BRAIN_VLM_MODEL`, at most `BRAIN_VLM_MAX_PER_HOUR`, oldest first). When there is
+no vision model, the call fails or times out, or the budget is used up, local OCR reads the picture's text at once
+(optional, [14](14-OFFLINE-PACKAGING.md) §1) and the vision model adds its description later. What waits is retried
+every 10 minutes. The **Documents** page shows passages, vectors and described pictures per document, updated live.
+
+### 3.6b The vector cache
+Every embedding goes through `llm.embed`, which first looks in `data/vectors.db`: one int8 vector per embedding
+model and text (SHA-1). Re-indexing, re-uploads, new document versions and branch overlays therefore send only the
+texts that really changed to the API. Unused entries are removed after `BRAIN_VECTOR_CACHE_DAYS`.
 
 ### 3.7 Live UI
 Every job step, document change, repository or settings change, and webhook delivery increases one change counter
@@ -141,6 +151,7 @@ Everything lives under `BRAIN_DATA_DIR` (default `data/` in the install folder).
 | `worktrees/<repo>--<branch>/` | branch overlay checkouts | remove overlays in the UI first |
 | `docs/docs.db` | the document engine: passages, keyword index, vectors, concepts, links | yes, if `originals/` is kept: **Re-index all** rebuilds it |
 | `docs/assets/` | the pictures of each document | with `docs.db` |
+| `vectors.db` | the embedding cache (model + text → vector) | yes: the next embeddings call the API again |
 | `originals/` | uploaded files exactly as received | **keep**: the source for re-indexing |
 | `converted/` | the Markdown each document was converted to | yes (re-created by re-indexing) |
 | `srs/templates/`, `srs/output/` | the user's requirements formats and written specifications | keep |
@@ -154,9 +165,10 @@ A backup is a copy of `data/`, `.env` and `repos.json`.
 ```
 brain.py  brain.cmd  brain.sh        CLI and launchers (the launchers use .venv)
 setup.ps1  setup.sh                  offline installers
-requirements.txt  .env.example  repos.example.json
+requirements.txt  requirements-ocr.txt  .env.example  repos.example.json
 README.md  INSTALL.html
 wheels/                              every Python package for Python 3.13, Windows x64 and Linux x86-64 (41 files)
+wheels/ocr/                          optional OCR fallback (RapidOCR + ONNX Runtime, 16 files)
 bin/                                 codebase-memory-mcp archives + SHA256SUMS (setup unpacks bin/windows or bin/linux)
 brain/                               the server
   providers/                         codebase_memory.py, docgraph.py, convert.py
@@ -173,9 +185,10 @@ Created at run time: `.venv/`, `.env`, `repos.json`, `data/`.
    graph statistics and one batched embedding pass; models are used at question time, and for pictures.
 2. **One of everything.** One process, one port, one settings schema, one configuration file, one job mechanism,
    one search used by every function, one tool implementation behind MCP, REST and the agents.
-3. **Degrade, never block.** Every model step has a fallback; every long step is a background job with visible
-   progress and errors; a failed embedding or picture step is finished later.
-4. **Interfaces at the seams.** Engine-specific code lives only in `brain/providers/`.
-5. **Local state only.** SQLite and plain files; a backup is a folder copy.
-6. **Evidence first.** Every answer, prompt and specification is built from search results that are shown with it.
+3. **Degrade, never block.** Every model step has a fallback (pictures: local OCR); every long step is a background
+   job with visible progress and errors; a failed embedding or picture step is finished later.
+4. **Never pay twice.** An embedding or a picture description is computed once per text or picture and reused.
+5. **Interfaces at the seams.** Engine-specific code lives only in `brain/providers/`.
+6. **Local state only.** SQLite and plain files; a backup is a folder copy.
+7. **Evidence first.** Every answer, prompt and specification is built from search results that are shown with it.
 7. **Small.** About 6,350 lines of Python and a 750-line UI script, 12 direct Python dependencies.

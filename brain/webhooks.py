@@ -7,10 +7,12 @@ Every repository has its OWN webhook: POST /webhooks/repo/<name> with its own se
 recognised from the request. The group-level endpoints below remain for one hook covering many repositories:
 
 GitLab   POST /webhooks/gitlab   header X-Gitlab-Token == BRAIN_GITLAB_WEBHOOK_SECRET
-         events: "Merge Request Hook" (action=merge, target_branch=<tracked>), "Push Hook" (ref=refs/heads/<tracked>)
+         events: "Merge Request Hook" (action=merge, target_branch=<tracked>), "Push Hook" (ref=refs/heads/<tracked>;
+                 after=000...0 on another branch = branch deleted: its overlay is removed)
 TFS/ADO  POST /webhooks/tfs      Basic auth == BRAIN_TFS_WEBHOOK_USER / BRAIN_TFS_WEBHOOK_PASSWORD
          events: git.pullrequest.merged / git.pullrequest.updated (status=completed, targetRefName=refs/heads/<tracked>),
-                 git.push (refUpdates[].name = refs/heads/<tracked>)
+                 git.push (refUpdates[].name = refs/heads/<tracked>; newObjectId=000...0 = branch deleted)
+A push to another branch that has an overlay updates that overlay (BRAIN_BRANCH_UPDATE_ON_PUSH).
 """
 from __future__ import annotations
 
@@ -73,9 +75,31 @@ def _result(source: str, status: int, body: dict) -> tuple[int, dict]:
     return status, body
 
 
-def _accept(source: str, r: dict, event: str, ref: str) -> tuple[int, dict]:
-    if ref.removeprefix("refs/heads/") != r["branch"]:
-        return _result(source, 200, {"ignored": f"{event} on {ref}, tracked branch is {r['branch']}", "repo": r["name"]})
+ZERO = "0" * 40
+
+
+def _other_branch(source: str, r: dict, event: str, branch: str, deleted: bool) -> tuple[int, dict]:
+    """An event on a branch that is not the main one: a deleted branch removes its overlay; a push or merge to
+    another main branch updates (or creates) its overlay; a push to a branch that has an overlay updates it
+    (BRAIN_BRANCH_UPDATE_ON_PUSH); any other branch is ignored."""
+    has = f"{r['name']}@{branch}" in repos.state()["branches"]
+    is_main = branch in r.get("mains", [])
+    if deleted:
+        if not has:
+            return _result(source, 200, {"ignored": f"branch {branch} deleted, it had no overlay", "repo": r["name"]})
+        removed = repos.drop_branch(r["name"], branch, f"webhook {source}: branch deleted")
+        return _result(source, 200 if removed else 500, {"removed": f"{r['name']}@{branch}", "ok": removed, "repo": r["name"]})
+    if is_main or (has and event == "push" and cfg.get("BRAIN_BRANCH_UPDATE_ON_PUSH")):
+        job = repos.request_branch(r["name"], branch, f"webhook {source} push")
+        return _result(source, 202, {"accepted": True, "repo": r["name"], "branch": branch,
+                                     "job": job.id if job else None, "queued": job is None})
+    return _result(source, 200, {"ignored": f"{event} on {branch}, tracked branch is {r['branch']}", "repo": r["name"]})
+
+
+def _accept(source: str, r: dict, event: str, ref: str, deleted: bool = False) -> tuple[int, dict]:
+    branch = ref.removeprefix("refs/heads/")
+    if branch != r["branch"]:
+        return _other_branch(source, r, event, branch, deleted)
     job = repos.request_sync(r["name"], reason=f"webhook {source} {event}")
     return _result(source, 202, {"accepted": True, "repo": r["name"], "event": event,
                                  "job": job.id if job else None, "queued": job is None})
@@ -89,11 +113,14 @@ def _gitlab_event(r: dict, headers: dict, payload: dict, source: str) -> tuple[i
             return _result(source, 200, {"ignored": "merge events disabled (BRAIN_WEBHOOK_EVENTS)", "repo": r["name"]})
         if a.get("action") != "merge" and a.get("state") != "merged":
             return _result(source, 200, {"ignored": f"merge request {a.get('action') or a.get('state')}", "repo": r["name"]})
+        if a.get("force_remove_source_branch") in (True, "1", "true") and a.get("source_branch"):
+            repos.drop_branch(r["name"], a["source_branch"], f"webhook {source}: merged and source branch removed")
         return _accept(source, r, "merge", a.get("target_branch", ""))
     if kind in ("push", "Push Hook"):
-        if "push" not in _events():
+        deleted = payload.get("after") == ZERO
+        if "push" not in _events() and not deleted:
             return _result(source, 200, {"ignored": "push events disabled (BRAIN_WEBHOOK_EVENTS)", "repo": r["name"]})
-        return _accept(source, r, "push", payload.get("ref", ""))
+        return _accept(source, r, "push", payload.get("ref", ""), deleted)
     return _result(source, 200, {"ignored": f"event {kind}", "repo": r["name"]})
 
 
@@ -107,11 +134,21 @@ def _tfs_event(r: dict, payload: dict, source: str) -> tuple[int, dict]:
             return _result(source, 200, {"ignored": f"pull request {res.get('status')}", "repo": r["name"]})
         return _accept(source, r, "merge", res.get("targetRefName", ""))
     if event == "git.push":
+        updates = res.get("refUpdates") or []
+        tracked = f"refs/heads/{r['branch']}"
+        for u in updates:   # one push can delete several branches
+            name = u.get("name", "")
+            if name != tracked and name.startswith("refs/heads/") and u.get("newObjectId") == ZERO:
+                _other_branch(source, r, "push", name.removeprefix("refs/heads/"), True)
         if "push" not in _events():
             return _result(source, 200, {"ignored": "push events disabled (BRAIN_WEBHOOK_EVENTS)", "repo": r["name"]})
-        refs = [u.get("name", "") for u in res.get("refUpdates") or []]
-        tracked = f"refs/heads/{r['branch']}"
-        return _accept(source, r, "push", tracked if tracked in refs else (refs[0] if refs else ""))
+        live = [u.get("name", "") for u in updates if u.get("newObjectId") != ZERO]
+        for name in live[1:] if tracked not in live else [x for x in live if x != tracked]:   # other main branches in the same push
+            if name.removeprefix("refs/heads/") in r.get("mains", []):
+                _other_branch(source, r, "push", name.removeprefix("refs/heads/"), False)
+        if not live:
+            return _result(source, 200, {"handled": "branch deletion", "repo": r["name"]})
+        return _accept(source, r, "push", tracked if tracked in live else live[0])
     return _result(source, 200, {"ignored": f"event {event}", "repo": r["name"]})
 
 

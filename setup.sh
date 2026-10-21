@@ -39,6 +39,10 @@ VPY="$PWD/.venv/bin/python"
 step "Python packages (offline, from wheels/)"
 "$VPY" -m pip install --no-index --find-links wheels -r requirements.txt || {
   echo "offline package install failed: is the wheels/ folder complete? (see docs/14-OFFLINE-PACKAGING.md)"; exit 1; }
+if [ -d wheels/ocr ]; then
+  step "OCR fallback (optional, from wheels/ocr/)"
+  "$VPY" -m pip install --no-index --no-deps --find-links wheels/ocr -r requirements-ocr.txt     || echo "OCR fallback not installed; pictures are described only by the vision model"
+fi
 
 step "Code graph engine (codebase-memory-mcp)"
 if [ ! -x bin/linux/codebase-memory-mcp ]; then

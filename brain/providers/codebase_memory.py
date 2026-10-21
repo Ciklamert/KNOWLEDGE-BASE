@@ -175,12 +175,15 @@ class Provider(CodeGraph):
             tail: list[str] = []
 
             def read_progress():
-                for line in p.stderr:
-                    line = line.strip()
-                    if line and not line.startswith("level="):
-                        tail.append(line)
-                        del tail[:-20]
-                        log(f"{project}: {line[:160]}")
+                try:
+                    for line in p.stderr:
+                        line = line.strip()
+                        if line and not line.startswith("level="):
+                            tail.append(line)
+                            del tail[:-20]
+                            log(f"{project}: {line[:160]}")
+                except (ValueError, OSError):   # communicate() closed the pipe when the process ended
+                    pass
             reader = threading.Thread(target=read_progress, daemon=True)
             reader.start()
             try:

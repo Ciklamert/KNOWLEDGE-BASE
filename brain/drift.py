@@ -24,13 +24,25 @@ def _files(root, a: str, b: str) -> list[str]:
 
 
 def check(repo_name: str, branch: str | None = None, base_commit: str | None = None,
-          changed_files: list[str] | None = None, head_commit: str | None = None) -> dict:
+          changed_files: list[str] | None = None, head_commit: str | None = None, base: str | None = None) -> dict:
+    """`base` = the main branch the branch derives from; when empty: the branch itself if it is a main branch, the
+    main recorded in its overlay, or the nearest main (repos.base_of) for a pushed branch."""
     r = repos.repo(repo_name)
-    root, main = repos.checkout(r), r["branch"]
+    root = repos.checkout(r)
     st = repos.state()
-    indexed = st["repos"].get(r["name"], {}).get("commit")
     url = repos.remote(r) if r["url"] else ""
-    rep: dict = {"repo": r["name"], "tracked_branch": main, "branch": branch, "indexed_commit": indexed,
+    all_mains = repos.mains(r)
+    overlay = st["branches"].get(f"{r['name']}@{branch}") if branch else None
+    main = base if base in all_mains else branch if branch in all_mains else (overlay or {}).get("base") or ""
+    if not main and branch and len(all_mains) > 1:
+        try:
+            main = repos.base_of(r, branch, root, url or repos.git(root, "remote", "get-url", "origin", timeout=30))
+        except RuntimeError:
+            pass
+    main = main or r["branch"]
+    indexed = (st["repos"].get(r["name"], {}) if main == r["branch"] else
+               st["branches"].get(f"{r['name']}@{main}", {})).get("commit")
+    rep: dict = {"repo": r["name"], "tracked_branch": main, "mains": all_mains, "branch": branch, "indexed_commit": indexed,
                  "facts": [], "risk_files": [], "branch_files": [], "main_files": [], "recommendations": []}
     rec, facts = rep["recommendations"], rep["facts"]
     try:
@@ -50,9 +62,10 @@ def check(repo_name: str, branch: str | None = None, base_commit: str | None = N
             n = -1
         facts.append(f"the knowledge base indexed {main} at {indexed[:10]}, {main} is now at {main_head[:10]}"
                      + (f" ({n} commits newer)" if n > 0 else ""))
-        rec.append({"action": "sync_brain", "why": "the knowledge base is behind main",
-                    "how": f"POST /api/repos/{r['name']}/sync (or the Update button / MCP tool `sync_repo`). "
-                           "Webhooks normally do this within seconds; if this repeats, check the webhook."})
+        rec.append({"action": "sync_brain", "why": f"the knowledge base is behind {main}",
+                    "how": f"POST /api/repos/{r['name']}/sync (or the Update button / MCP tool `sync_repo`), which also "
+                           "updates the other main branches. Webhooks normally do this within seconds; if this "
+                           "repeats, check the webhook."})
 
     # 2) where did the branch start, and what changed on each side?
     branch_head = head_commit
@@ -126,7 +139,6 @@ def check(repo_name: str, branch: str | None = None, base_commit: str | None = N
                         "how": f"push the branch, then POST /api/repos/{r['name']}/branches {{\"branch\": \"{branch}\"}} "
                                "(or 'Index a branch…' on the Repositories page). Search/ask/enhance with branch="
                                f"{branch} then use it. Remove it after merging."})
-    overlay = st["branches"].get(f"{r['name']}@{branch}") if branch else None
     if overlay and branch_head and overlay.get("commit") != branch_head:
         rec.append({"action": "refresh_overlay", "why": "the branch overlay is older than your branch head",
                     "how": f"re-run POST /api/repos/{r['name']}/branches {{\"branch\": \"{branch}\"}}"})

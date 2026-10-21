@@ -36,7 +36,7 @@ def main():
     check(f"python 3.13 ({sys.version.split()[0]})", sys.version_info[:2] == (3, 13))
     for mod in ("brain.settings", "brain.query", "brain.jobs", "brain.llm", "brain.auth", "brain.search", "brain.repos", "brain.drift", "brain.agents",
                 "brain.webhooks", "brain.mcp", "brain.server", "brain.codevec", "brain.srs", "brain.providers.codebase_memory", "brain.providers.docgraph",
-                "brain.providers.convert"):
+                "brain.providers.convert", "brain.vcache", "brain.ocr"):
         try:
             importlib.import_module(mod)
             check(f"import {mod}", True)
@@ -128,6 +128,90 @@ def main():
     auth = "Basic " + _b64.b64encode(f"x:{saved['repos'][1]['webhook_secret']}".encode()).decode()
     code, body = webhooks.repo_hook("web", {"authorization": auth}, {"eventType": "git.push", "resource": {"refUpdates": [{"name": "refs/heads/dev"}]}})
     check("own webhook accepts TFS secret (other branch ignored)", code == 200 and "ignored" in body, body)
+    import time as _t
+    from brain import repos as _repos
+    gone = []
+    real_rm, real_git = _repos.remove_branch, _repos.git
+    _repos.remove_branch = lambda n, b: (gone.append(b), _repos._save_state(lambda d: d["branches"].pop(f"{n}@{b}", None)))
+
+    def _overlay(repo, branch, age_days=0):
+        _repos._save_state(lambda d: d["branches"].__setitem__(f"{repo}@{branch}", {
+            "repo": repo, "branch": branch, "project": f"{repo}--{branch}", "path": str(_TMP / "wt"),
+            "indexed_at": _t.time() - age_days * 86400}))
+    _overlay("billing", "feature/x")
+    code, body = webhooks.repo_hook("billing", {"x-gitlab-token": sec},
+                                    {"object_kind": "push", "ref": "refs/heads/feature/x", "after": "0" * 40})
+    check("GitLab branch deletion removes its overlay", code == 200 and gone == ["feature/x"], body)
+    _overlay("web", "dev")
+    code, body = webhooks.repo_hook("web", {"authorization": auth}, {"eventType": "git.push", "resource": {
+        "refUpdates": [{"name": "refs/heads/dev", "newObjectId": "0" * 40}]}})
+    check("TFS branch deletion removes its overlay", gone[-1:] == ["dev"] and "web@dev" not in _repos.state()["branches"], body)
+    _overlay("billing", "kept")
+    _overlay("billing", "deleted-quietly")
+    _repos.git = lambda *a, **k: "1a2b\trefs/heads/main\n3c4d\trefs/heads/kept"
+    check("reconcile: overlays whose branch is gone on the server are removed",
+          _repos.reconcile_branches("billing") == ["deleted-quietly"] and "billing@kept" in _repos.state()["branches"])
+    _overlay("billing", "old", age_days=40)
+    cfg.update({"BRAIN_BRANCH_TTL_DAYS": "30"})
+    check("expiry: an overlay unused for BRAIN_BRANCH_TTL_DAYS is removed", _repos.expire_branches() == ["billing@old"]
+          and "billing@kept" in _repos.state()["branches"])
+    _repos.remove_branch, _repos.git = real_rm, real_git
+    _repos._save_state(lambda d: d["branches"].clear())
+
+    # several main branches: configured per repository or by default, kept for ever, updated by webhooks,
+    # and a feature branch is compared with the main it derives from
+    check("other main branches: list or comma-separated, the main branch itself left out",
+          cfg.normalize_repo({"name": "x", "path": "p", "branch": "main", "mains": "develop, main ,release/2.0"})["mains"]
+          == ["develop", "release/2.0"])
+    cfg.update({"BRAIN_OTHER_MAIN_BRANCHES": "develop"})
+    check("other main branches: BRAIN_OTHER_MAIN_BRANCHES when a repository names none",
+          cfg.normalize_repo({"name": "x", "path": "p"})["mains"] == ["develop"])
+    cfg.update({"BRAIN_OTHER_MAIN_BRANCHES": ""})
+    cfg.save_repos([{**saved["repos"][0], "mains": ["develop"]}, saved["repos"][1]], {"payments": ["billing", "web"]})
+    _overlay("billing", "develop", age_days=400)
+    _repos._save_state(lambda d: d["branches"]["billing@develop"].update(main=True))
+    check("other main branches never expire", _repos.expire_branches() == [] and _repos.expires_at(
+        _repos.state()["branches"]["billing@develop"]) is None)
+    asked = []
+    real_req = _repos.request_branch
+    _repos.request_branch = lambda n, b, reason="", base=None: asked.append(b)
+    code, body = webhooks.repo_hook("billing", {"x-gitlab-token": sec}, {"object_kind": "merge_request", "object_attributes": {
+        "action": "merge", "state": "merged", "target_branch": "develop"}})
+    check("a merge into another main branch updates it", asked == ["develop"] and code == 202, body)
+    _repos.request_branch = real_req
+    _repos._save_state(lambda d: d["branches"].clear())
+    import subprocess as _sp
+    origin, work = _TMP / "origin.git", _TMP / "work"
+    g = lambda cwd, *a: _sp.run(["git", "-C", str(cwd), *a], capture_output=True, text=True, check=True).stdout.strip()
+    _sp.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    _sp.run(["git", "clone", "-q", str(origin), str(work)], check=True, capture_output=True)
+    for args in (["config", "user.email", "t@t"], ["config", "user.name", "t"], ["checkout", "-qb", "main"],
+                 ["commit", "-q", "--allow-empty", "-m", "a"], ["push", "-q", "origin", "main"],
+                 ["checkout", "-qb", "develop"], ["commit", "-q", "--allow-empty", "-m", "b"],
+                 ["commit", "-q", "--allow-empty", "-m", "c"], ["push", "-q", "origin", "develop"],
+                 ["checkout", "-qb", "feature/y"], ["commit", "-q", "--allow-empty", "-m", "d"],
+                 ["push", "-q", "origin", "feature/y"], ["fetch", "-q", "origin"]):
+        g(work, *args)
+    r0 = {"name": "billing", "branch": "main", "mains": ["develop", "release/9"]}
+    check("a feature branch derives from the nearest main branch",
+          _repos.base_of(r0, "feature/y", work, str(origin)) == "develop"
+          and _repos.base_of(r0, "develop", work, str(origin)) == "main")
+
+    # one embedding per (model, text): a text embedded before never costs another API call
+    from brain import llm as _llm
+    sent = []
+    real_post = _llm._post
+    _llm._post = lambda url, key, body, timeout: (sent.append(len(body["input"])), {"data": [
+        {"index": i, "embedding": [1.0, float(len(t))]} for i, t in enumerate(body["input"])]})[1]
+    cfg.update({"BRAIN_EMBEDDING_MODEL": "m1", "BRAIN_LLM_BASE_URL": "http://gateway/v1"})
+    a = _llm.embed(["alpha", "beta"])
+    b = _llm.embed(["beta", "gamma"])
+    cfg.update({"BRAIN_EMBEDDING_MODEL": "m2"})
+    _llm.embed(["alpha"])
+    check("vector cache: only new texts reach the API, per model", sent == [2, 1, 1]
+          and abs(b[0][1] / b[0][0] - a[1][1] / a[1][0]) < 0.05, (sent, a, b))
+    _llm._post = real_post
+    cfg.update({"BRAIN_EMBEDDING_MODEL": "", "BRAIN_LLM_BASE_URL": ""})
     try:
         cfg.save_repos([{"name": "a", "path": "x"}], {"s": ["nope"]})
         check("unknown set member rejected", False)
@@ -282,6 +366,61 @@ def main():
           any(dg.fold(a) == "iade onayi" for a in (ent.get("Refund Approval", {}).get("aliases") or []))
           and any(c["doc"] == "iade-kurallari.md" for c in r["chunks"]), (ent, [c["doc"] for c in r["chunks"]]))
 
+    # pictures: decorative ones skipped, OCR when the vision call fails, the vision model upgrades it, cache by SHA-1
+    import io as _io
+    from PIL import Image as _Image, ImageDraw as _Draw, ImageFont as _Font
+    from brain import ocr as _ocr
+
+    def _png(w, h, text=""):
+        img = _Image.new("RGB", (w, h), "white")
+        if text:
+            _Draw.Draw(img).text((20, 30), text, fill="black", font=_Font.load_default(size=42))
+        out = _io.BytesIO()
+        img.save(out, "PNG")
+        return out.getvalue()
+    chart = _png(640, 120, "REFUND LIMIT 5000 EUR")
+    eng.upload("dot.png", _png(40, 40))
+    eng.upload("chart.png", chart)
+    _t.sleep(0.5)
+    with eng._completing:   # let the upload's own completion pass finish first
+        pass
+    kinds = lambda: {r["name"]: r["kind"] for r in eng._q("SELECT d.name, c.kind FROM chunks c JOIN docs d ON d.id = c.doc WHERE c.asset IS NOT NULL")}
+    check("pictures: a tiny picture is skipped as decorative", kinds().get("dot.png") == "decor", kinds())
+    calls = []
+    real_chat = dg.llm.chat
+
+    def _vision_down(*a, **k):
+        calls.append(1)
+        raise dg.llm.LLMError("timeout after 90s")
+    dg.llm.chat = _vision_down
+    cfg.update({"BRAIN_VLM_MODEL": "vlm", "BRAIN_LLM_BASE_URL": "http://gateway/v1"})
+    eng._describe_pictures()
+    text = eng._q("SELECT c.text FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.name = 'chart.png' AND c.asset IS NOT NULL")[0]["text"]
+    if _ocr.available():
+        check("pictures: OCR reads the text when the vision call fails", kinds()["chart.png"] == "ocr"
+              and "REFUND" in text.upper() and calls, (kinds(), text))
+    else:
+        check("pictures: without OCR a failed vision call leaves the picture waiting", kinds()["chart.png"] == "picture")
+    dg.llm.chat = lambda *a, **k: (calls.append(1), {"content": "Bar chart: refund limit 5000 EUR"})[1]
+    eng._describe_pictures()
+    check("pictures: the vision model's description replaces the OCR text later", kinds()["chart.png"] == "figure"
+          and "Bar chart" in eng._q("SELECT c.text FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.name = 'chart.png' AND c.asset IS NOT NULL")[0]["text"]
+          and dg.OCR_LABEL not in eng._q("SELECT c.text FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.name = 'chart.png' AND c.asset IS NOT NULL")[0]["text"])
+    n = len(calls)
+    eng.upload("chart-copy.png", chart)
+    _t.sleep(0.5)
+    with eng._completing:
+        pass
+    eng._describe_pictures()
+    check("pictures: the same picture in another document reuses its description (no call)",
+          kinds()["chart-copy.png"] == "figure" and len(calls) == n, (kinds(), len(calls), n))
+    cfg.update({"BRAIN_VLM_MAX_PER_HOUR": "2"})
+    dg._vlm_calls.clear()
+    check("pictures: hourly vision budget", [dg._vision_budget() for _ in range(3)] == [True, True, False])
+    dg.llm.chat = real_chat
+    cfg.update({"BRAIN_VLM_MODEL": "", "BRAIN_LLM_BASE_URL": "", "BRAIN_VLM_MAX_PER_HOUR": "60"})
+    eng.delete([d["id"] for d in eng.documents() if d["name"].endswith(".png")])
+
     # document cards: key sentences, dates, versions, numbers, other versions; themes
     base = ("# İade Prosedürü\nDoküman No: PRC-012\nVersiyon 1.0\nYürürlük tarihi: 01.03.2024\n\n## Amaç\nBu prosedür müşteri "
             "iadelerinin nasıl yapılacağını tanımlar. Şube müdürü 5.000 TL üzeri iadeleri onaylamalıdır. İade talepleri en geç 3 iş "
@@ -389,6 +528,11 @@ def main():
     whl = [p.name for p in (ROOT / "wheels").glob("*.whl")]
     check("bundled wheels present", len(whl) > 30, len(whl))
     check("wheels are for Python 3.13 only", not [w for w in whl if re.search(r"-cp3(?!13)\d+-cp3", w)])
+    ocr_whl = [p.name.lower() for p in (ROOT / "wheels" / "ocr").glob("*.whl")]
+    pins = [ln.split("==")[0].strip().lower().replace("-", "_") for ln in
+            (ROOT / "requirements-ocr.txt").read_text(encoding="utf-8").splitlines() if "==" in ln]
+    check("OCR pack: a wheel for every pin (Windows and Linux where binary)",
+          not ocr_whl or all(any(w.replace("-", "_").startswith(p + "_") for w in ocr_whl) for p in pins), pins)
     for f in ("README.md", "INSTALL.html", "setup.ps1", "setup.sh", "brain.cmd", "brain.sh", "requirements.txt",
               "repos.example.json", "bin/SHA256SUMS"):
         check(f"file present: {f}", (ROOT / f).exists())

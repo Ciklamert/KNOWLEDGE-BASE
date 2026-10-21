@@ -27,7 +27,8 @@ check and the webhook delivery history.
 | `name` | yes (taken from the URL or path when missing) | unique id and the code-graph project name; characters other than letters, digits, `_ . -` become `-` |
 | `url` | `url` or `path` | git URL, `gitlab:group/project` or `tfs:Project/repo`; the server clones it into `data/repos/<name>` and **owns** that clone |
 | `path` | `url` or `path` | an existing checkout on the server; it is never reset, only fast-forwarded when clean and on `branch` |
-| `branch` | no (default `BRAIN_DEFAULT_BRANCH` = `main`) | the branch the code graph follows; webhooks for other branches are ignored |
+| `branch` | no (default `BRAIN_DEFAULT_BRANCH` = `main`) | the main branch: the branch the code graph follows |
+| `mains` | no (default `BRAIN_OTHER_MAIN_BRANCHES`, empty) | other main branches, a list or comma separated (`["develop", "release/2.0"]`): each is indexed as a permanent overlay, updated by webhooks and every update like the main branch, and never expires; feature branches are compared with the main they derive from ([10](10-BRANCH-DRIFT.md) §2.2) |
 | `provider` | no (detected) | `gitlab`, `tfs`, `git` or `local`; decides which webhook setup steps the UI shows |
 | `webhook_secret` | generated | secret of the repository's own webhook `/webhooks/repo/<name>`; generated when the repository is saved, or at server start for repositories added by hand |
 | `user`, `token` | no | this repository's own git credentials (for example a GitLab project access token); otherwise the server's |

@@ -40,6 +40,7 @@ ol.steps>li{margin:.7rem 0}
 <p class="lede">From an empty server to a running code graph, code vectors, document graph, search, ask, enhance and
 requirements writer, on <b>Windows</b> or <b>Linux</b>, without internet access. Follow the steps in order; every
 command can be copied as it is.</p>
+<p>Türkçe: <a href="docs/tr/01-KURULUM.md">docs/tr/01-KURULUM.md</a> (kurulum) ve <a href="docs/tr/README.md">docs/tr/</a> (sistemin her bölümü).</p>
 
 <div class="tabs" role="tablist" aria-label="Operating system">
   <button class="on" data-os="win" role="tab" aria-selected="true">Windows</button>
@@ -156,7 +157,8 @@ repository or a whole set.</p>
 zip archives, EPUB, notebooks, Markdown, text, source code, images) or add a note. Every document is converted to
 Markdown first (<b>Markdown</b> shows the result), split into passages along its headings and pages, and is searchable
 as soon as the upload returns; no model call is needed for that. The <b>Vectors</b> and <b>Pictures</b> columns fill up
-in the background (one batched embedding pass, one vision call per picture). <b>Remove</b> deletes a document;
+in the background (one batched embedding pass, one vision call per new picture; a text or picture seen before costs
+no call; local OCR reads pictures when the vision model is missing or slow). <b>Remove</b> deletes a document;
 <b>Re-index all</b> rebuilds every document from <code>data/originals/</code>.</p>
 <p>Requirements: open <b>Requirements → Formats</b> and add your organisation's format (type it, or load a Word or PDF
 template). No format is built in; the writer refuses to write until one exists.</p>

@@ -167,7 +167,8 @@ The requirements writer always uses one of your organisation's formats; there is
 curl -s -H "$H" -F "files=@Iade-Proseduru.pdf" -F "files=@Tarifeler.xlsx" $BRAIN/api/docs/upload   # {"job": "..."}
 ```
 When the job is done, each file is searchable; its result lists `passages` and `pictures` per file. Vectors and
-picture descriptions follow in the background (`GET /api/docs` shows `vectors` and `described`). Supported: PDF
+picture descriptions follow in the background (`GET /api/docs` shows `vectors` and `described`); a text or picture
+seen before costs no new API call. Supported: PDF
 (tables, pictures, scanned pages), Word, PowerPoint, Excel, HTML, CSV, JSON, XML, e-mails, zip archives, EPUB,
 notebooks, Markdown, text, code and images. Uploading a file with the same name replaces it.
 - A short text as a document: `POST /api/docs/text` with `{"name": "decision-42.md", "text": "..."}`.

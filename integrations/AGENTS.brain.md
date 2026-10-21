@@ -24,9 +24,10 @@ for each thing the next session would otherwise have to rediscover: a `decision`
 codebase does things). Give a short title, the text, the `repo` and the code `paths` it concerns. Do not record what
 the code or git history already says.
 
-When the current branch is not `main`: run `git rev-parse --abbrev-ref HEAD`, `git merge-base HEAD origin/main`,
-`git diff --name-only origin/main...HEAD` and `git status --porcelain`, call `check_branch` with the results and follow
-its recommendations. AI-BRAIN describes `main`; for files you changed, trust your working copy.
+When the current branch is not a main branch (`main`, or `develop` / `release/...` where the team keeps several):
+run `git rev-parse --abbrev-ref HEAD`, `git merge-base HEAD origin/<main you branched from>`,
+`git diff --name-only origin/<main>...HEAD` and `git status --porcelain`, call `check_branch` with the results and
+follow its recommendations. AI-BRAIN describes the main branches; for files you changed, trust your working copy.
 
 Without MCP (pi, scripts): the same over REST with `Authorization: Bearer $BRAIN_API_TOKEN`:
 ```bash

@@ -63,11 +63,22 @@ SCHEMA: list[Setting] = [
     S("BRAIN_EMBEDDING_BASE_URL", "", "Corporate API", "Only if embeddings live on a different URL."),
     S("BRAIN_EMBEDDING_API_KEY", "", "Corporate API", "Only if embeddings need a different key.", "secret"),
     S("BRAIN_VLM_MODEL", "", "Corporate API", "Vision model (optional): describes pictures, charts and scanned pages in documents, one call per picture, after the text is already searchable."),
+    S("BRAIN_VLM_TIMEOUT", "90", "Corporate API",
+      "Seconds for one vision call. On timeout or error the picture is read by local OCR (when installed) and the "
+      "vision model is tried again later.", "float"),
+    S("BRAIN_VLM_MAX_PER_HOUR", "60", "Corporate API",
+      "Most vision calls per hour (0 = no limit), oldest pictures first; the rest wait (OCR reads them meanwhile) "
+      "and continue by themselves every 10 minutes.", "int"),
     S("BRAIN_CA_BUNDLE", "", "Corporate API", "Corporate CA certificate (PEM) for TLS interception."),
     S("BRAIN_VERIFY_TLS", "true", "Corporate API", "Verify TLS certificates of the corporate API.", "bool"),
     S("BRAIN_LLM_TIMEOUT", "120", "Corporate API", "Default seconds for one chat/embedding HTTP call.", "float"),
     S("BRAIN_EMBED_BATCH", "64", "Corporate API", "Texts per embedding request (document passages, code symbols).", "int"),
     S("BRAIN_EMBED_PARALLEL", "4", "Corporate API", "Parallel embedding requests while indexing.", "int"),
+    S("BRAIN_VECTOR_CACHE", "true", "Corporate API",
+      "Keep every embedding in data/vectors.db, keyed by model and text, so a text already embedded (re-index, "
+      "re-upload, new version, branch overlay) never costs another API call.", "bool"),
+    S("BRAIN_VECTOR_CACHE_DAYS", "180", "Corporate API",
+      "Remove cached embeddings not used for N days (0 = keep forever). About 1 KB per text at 1024 dimensions.", "int"),
     # ---- prompt analysis (first step of search, ask and enhance) -----------------------------------------
     S("BRAIN_QUERY_MAX_TERMS", "12", "Relevance", "How many key terms are extracted from a prompt (most important first).", "int"),
     S("BRAIN_STOPWORDS_EXTRA", "", "Relevance",
@@ -142,7 +153,18 @@ SCHEMA: list[Setting] = [
       "choice", ("local", "both")),
     S("BRAIN_CODE_VECTORS_MAX", "200000", "Code graph", "Largest number of symbols embedded per repository.", "int"),
     # ---- git servers / updates & webhooks (shown on the Repositories page) -----------------------------
-    S("BRAIN_DEFAULT_BRANCH", "main", "Updates & webhooks", "Branch the code graph follows when a repository does not name one."),
+    S("BRAIN_DEFAULT_BRANCH", "main", "Updates & webhooks",
+      "The main branch: the branch the code graph follows when a repository does not name its own (each repository "
+      "can choose another on the Repositories page). Branch overlays are compared with it and reuse its vectors."),
+    S("BRAIN_OTHER_MAIN_BRANCHES", "", "Updates & webhooks",
+      "Other main branches every repository keeps indexed next to its main branch, comma separated (for example "
+      "develop, release/2.0), when the repository does not name its own on the Repositories page. Each is updated "
+      "like the main branch and never expires; feature branches are compared with the main they derive from."),
+    S("BRAIN_BRANCH_TTL_DAYS", "30", "Updates & webhooks",
+      "Remove a branch overlay not indexed or searched for N days (0 = keep until the branch is deleted). Overlays "
+      "of deleted branches are removed at once by the webhook, or at the next update of the repository.", "int"),
+    S("BRAIN_BRANCH_UPDATE_ON_PUSH", "true", "Updates & webhooks",
+      "A push to a branch that has an overlay re-indexes that overlay (needs push events on all branches in the webhook).", "bool"),
     S("BRAIN_GIT_TIMEOUT", "900", "Git servers", "Seconds for one git clone/fetch.", "float"),
     S("BRAIN_GITLAB_URL", "", "Git servers",
       "Corporate GitLab base URL, e.g. https://gitlab.corp.local. Repositories can then be written as gitlab:group/project."),
@@ -179,6 +201,14 @@ SCHEMA: list[Setting] = [
       "Meaning similarity (0-1) at which two document concepts count as the same thing (synonyms, Turkish/English "
       "translations) and at which a question reaches a concept by meaning. Check aliases on the Document graph page; "
       "raise it if unrelated concepts are joined.", "float"),
+    S("BRAIN_PICTURE_MIN_PX", "120", "Document graph",
+      "Pictures smaller than this on a side, or of nearly one colour, are skipped (logos, lines, spacers): no vision "
+      "call, no OCR.", "int"),
+    S("BRAIN_OCR", "fallback", "Document graph",
+      "Local OCR (RapidOCR, optional install from wheels/ocr): fallback = read a picture's text when there is no "
+      "vision model, when the vision call fails or times out, or when the hourly vision budget is used up; "
+      "off = never.", "choice", ("fallback", "off")),
+    S("BRAIN_OCR_MIN_SCORE", "0.5", "Document graph", "OCR lines below this confidence (0-1) are left out.", "float"),
     S("BRAIN_CONCEPT_CODE_SIM", "0.5", "Document graph",
       "Meaning similarity (0-1) at which search links a document concept to the code that implements it, through the "
       "stored multilingual code vectors (no API call).", "float"),
@@ -446,6 +476,12 @@ def provider_of(url: str, path: str = "") -> str:
     return "git"
 
 
+def _branches(v) -> list[str]:
+    """A list of branch names from a list or a comma-separated string."""
+    items = v if isinstance(v, list) else str(v or "").split(",")
+    return [str(b).strip() for b in items if str(b).strip()]
+
+
 def normalize_repo(r: dict) -> dict:
     if not r.get("url"):   # {"gitlab": "group/project"} / {"tfs": "Project/repo"} -> url shorthand
         for kind in ("gitlab", "tfs"):
@@ -464,7 +500,9 @@ def normalize_repo(r: dict) -> dict:
     if provider not in ("gitlab", "tfs", "git", "local"):
         raise ValueError(f"repository {name}: provider must be gitlab, tfs, git or local")
     return {"name": name, "provider": provider, "url": url, "path": path,
-            "branch": str(r.get("branch") or "").strip() or get("BRAIN_DEFAULT_BRANCH"),
+            "branch": (branch := str(r.get("branch") or "").strip() or get("BRAIN_DEFAULT_BRANCH")),
+            "mains": [m for m in dict.fromkeys(_branches(r.get("mains")) or _branches(get("BRAIN_OTHER_MAIN_BRANCHES")))
+                      if m != branch],
             "webhook_secret": str(r.get("webhook_secret") or "").strip(),
             "user": str(r.get("user") or "").strip(), "token": str(r.get("token") or "").strip(),
             "aliases": list(r.get("aliases") or [])}

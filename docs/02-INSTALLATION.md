@@ -67,7 +67,7 @@ Often useful:
 | Key | Example | Meaning |
 |---|---|---|
 | `BRAIN_PUBLIC_URL` | `http://10.0.0.10:8765` | the address shown to users, agents and in webhook URLs |
-| `BRAIN_VLM_MODEL` | `qwen2.5-vl-32b` | vision model for pictures and scanned pages in documents |
+| `BRAIN_VLM_MODEL` | `qwen2.5-vl-32b` | vision model for pictures and scanned pages in documents; without it, the optional local OCR (`wheels/ocr/`) reads their text |
 | `BRAIN_CA_BUNDLE` | `C:\certs\corp-ca.pem` | internal CA certificate of the corporate API |
 | `BRAIN_GITLAB_URL`, `BRAIN_GITLAB_TOKEN` | `https://gitlab.corp.local` | corporate GitLab and a read token; repositories can be written as `gitlab:group/project` |
 | `BRAIN_TFS_URL`, `BRAIN_TFS_TOKEN` | `https://tfs.corp.local/tfs/DefaultCollection` | corporate TFS collection and a read token; repositories can be written as `tfs:Project/repo` |

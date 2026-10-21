@@ -7,7 +7,10 @@ A repository (repos.json) is either
     the tracked branch, and otherwise indexes it as it is.
 Repositories belong to any number of named sets; every search/ask/enhance can be limited to one set.
 The code-graph project of a repository is named after the repository. Branch overlays (see drift.py) are
-extra projects named <repo>--<branch> built from a git worktree of that branch.
+extra projects named <repo>--<branch> built from a git worktree of that branch. A repository can have several
+main branches: `branch` (the main one, the repository's own project) and `mains` (for example develop or
+release/2.0), each kept as a permanent overlay and updated like the main one. A feature branch's overlay records
+the main it derives from (`base`).
 """
 from __future__ import annotations
 
@@ -100,6 +103,8 @@ def resolve_scope(set_name: str | None = None, repo_names: list[str] | None = No
         overlay = st.get(f"{n}@{branch}") if branch else None
         if overlay and overlay.get("project") in indexed:
             out.append(overlay["project"])
+            if time.time() - (overlay.get("used_at") or 0) > 3600:
+                _save_state(lambda d, k=f"{n}@{branch}": d["branches"].get(k, {}).update(used_at=time.time()))
         elif n in indexed:
             out.append(n)
     return out
@@ -196,7 +201,55 @@ def sync_repo(name: str, job: jobs.Job | None = None) -> dict:
         _save_state(lambda d: d["repos"].setdefault(name, {}).update(error=str(exc), failed_at=time.time()))
         raise
     _save_state(lambda d: d["repos"].__setitem__(name, info))
+    reconcile_branches(name, log)
+    _sync_mains(r, log)
     return info
+
+
+def mains(r: dict) -> list[str]:
+    """Every main branch of a repository: the main one first, then the others."""
+    return [r["branch"], *r.get("mains", [])]
+
+
+def _sync_mains(r: dict, log) -> None:
+    """Index the other main branches of a repository whose overlay is missing or older than the server's head."""
+    if not r.get("mains"):
+        return
+    st = state()["branches"]
+    try:
+        url = remote(r) or git(checkout(r), "remote", "get-url", "origin", timeout=30)
+        heads = dict(reversed(line.split("\trefs/heads/", 1)) for line in
+                     git(None, "ls-remote", "--heads", url, url=url, repo=r, timeout=120).splitlines() if "\trefs/heads/" in line)
+    except (RuntimeError, ValueError) as exc:
+        log(f"{r['name']}: other main branches not checked: {exc}")
+        return
+    for m in r["mains"]:
+        have = st.get(f"{r['name']}@{m}")
+        if m not in heads:
+            log(f"{r['name']}: main branch {m} does not exist on the server")
+        elif not have or have.get("commit") != heads[m]:
+            try:
+                index_branch(r["name"], m, log)
+            except Exception as exc:
+                log(f"{r['name']}: main branch {m} not indexed: {exc}")
+
+
+def base_of(r: dict, branch: str, root: Path, url: str) -> str:
+    """The main branch a pushed branch derives from: the one with the fewest commits the branch does not share
+    (git rev-list --count origin/<main>..origin/<branch>). The repository's main branch when in doubt."""
+    cands = [m for m in mains(r) if m != branch]
+    if len(cands) <= 1:
+        return cands[0] if cands else r["branch"]
+    best = (float("inf"), r["branch"])
+    for m in cands:
+        try:
+            git(root, "fetch", "origin", f"+refs/heads/{m}:refs/remotes/origin/{m}", url=url, repo=r)
+            n = int(git(root, "rev-list", "--count", f"origin/{m}..origin/{branch}", timeout=60))
+        except (RuntimeError, ValueError):
+            continue
+        if n < best[0]:
+            best = (n, m)
+    return best[1]
 
 
 def _vectors(project: str, log) -> dict | None:
@@ -290,8 +343,17 @@ def refresh_stale() -> None:
     """Every repository is updated at least every BRAIN_SYNC_INTERVAL_MINUTES (default 24 hours): once a minute,
     repositories whose last update (successful or failed) is older than that get an update. Webhooks, pulls and
     buttons reset the clock, so a busy repository is not updated twice. Runs for ever."""
+    day = 0
     while True:
         time.sleep(60)
+        expire_branches()
+        if time.time() - day > 86400:
+            day = time.time()
+            try:
+                from . import vcache
+                vcache.prune()
+            except Exception:
+                pass
         minutes = cfg.get("BRAIN_SYNC_INTERVAL_MINUTES")
         if minutes <= 0:
             continue
@@ -325,23 +387,25 @@ def slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", text).strip("-") or "branch"
 
 
-def index_branch(name: str, branch: str, job: jobs.Job) -> dict:
+def index_branch(name: str, branch: str, log, base: str | None = None) -> dict:
     """Index a branch as an extra project (<repo>--<branch>) from a git worktree, so work on a branch can be
-    searched with that branch's code instead of main's."""
+    searched with that branch's code instead of main's. `base` = the main branch it derives from (found when empty)."""
     r = repo(name)
-    root = update_checkout(r, job.log) if managed(r) else checkout(r)
+    root = update_checkout(r, log) if managed(r) else checkout(r)
     url = remote(r) or git(root, "remote", "get-url", "origin", timeout=30)
-    job.log(f"fetching branch {branch}")
+    log(f"fetching branch {branch}")
     git(root, "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}", url=url, repo=r)
     wt = cfg.path("worktrees") / f"{r['name']}--{slug(branch)}"
     if wt.exists():
         git(root, "worktree", "remove", "--force", str(wt), timeout=120)
     git(root, "worktree", "prune", timeout=60)
     git(root, "worktree", "add", "--detach", "--force", str(wt), f"origin/{branch}", timeout=600)
-    res = providers.code().index(f"{r['name']}--{slug(branch)}", str(wt), job.log)
-    _vectors(res.get("project"), job.log)
+    res = providers.code().index(f"{r['name']}--{slug(branch)}", str(wt), log)
+    _vectors(res.get("project"), log)
+    is_main = branch in r.get("mains", [])
     info = {"repo": r["name"], "branch": branch, "project": res.get("project"), "commit": head(wt),
-            "path": str(wt), "indexed_at": time.time()}
+            "path": str(wt), "indexed_at": time.time(), "main": is_main,
+            "base": None if is_main else (base if base in mains(r) else base_of(r, branch, root, url))}
     _save_state(lambda d: d["branches"].__setitem__(f"{r['name']}@{branch}", info))
     return info
 
@@ -363,16 +427,81 @@ def remove_branch(name: str, branch: str) -> None:
         _save_state(lambda d: d["branches"].pop(key, None))
 
 
+def request_branch(name: str, branch: str, reason: str = "manual", base: str | None = None) -> jobs.Job | None:
+    """Index (or update) a branch overlay in the background; None when that branch is already being indexed."""
+    key = f"{name}@{branch}"
+    with _flags:
+        if key in _active:
+            return None
+        _active.add(key)
+
+    def work(job):
+        try:
+            return index_branch(name, branch, job.log, base)
+        finally:
+            with _flags:
+                _active.discard(key)
+    return jobs.start("branch", f"Index branch {key} ({reason})", work)
+
+
+def drop_branch(name: str, branch: str, reason: str, log=lambda m, p=None: None) -> bool:
+    """Remove a branch overlay if there is one (branch deleted, merged or expired). Never raises."""
+    if f"{name}@{branch}" not in state()["branches"]:
+        return False
+    try:
+        remove_branch(name, branch)
+        log(f"branch overlay {name}@{branch} removed: {reason}")
+        return True
+    except Exception as exc:
+        log(f"branch overlay {name}@{branch} not removed: {exc}")
+        return False
+
+
+def reconcile_branches(name: str, log=lambda m, p=None: None) -> list[str]:
+    """Remove the overlays of this repository whose branch no longer exists on the server (`git ls-remote --heads`):
+    the safety net for deletions that sent no webhook. One cheap git call, only when the repository has overlays."""
+    mine = [b for b in state()["branches"].values() if b["repo"] == name]
+    if not mine:
+        return []
+    r = repo(name)
+    try:
+        root = checkout(r)
+        url = remote(r) or git(root, "remote", "get-url", "origin", timeout=30)
+        heads = git(root if root.is_dir() else None, "ls-remote", "--heads", url, url=url, repo=r, timeout=120)
+    except (RuntimeError, ValueError) as exc:
+        log(f"{name}: branch check skipped: {exc}")
+        return []
+    alive = {line.split("refs/heads/", 1)[1] for line in heads.splitlines() if "refs/heads/" in line}
+    return [b["branch"] for b in mine
+            if b["branch"] not in alive and drop_branch(name, b["branch"], "branch deleted on the server", log)]
+
+
+def expire_branches(now: float | None = None) -> list[str]:
+    """Remove overlays not indexed or used for BRAIN_BRANCH_TTL_DAYS days (0 = never)."""
+    days = cfg.get("BRAIN_BRANCH_TTL_DAYS")
+    if days <= 0:
+        return []
+    now = now or time.time()
+    return [k for k, b in state()["branches"].items() if not b.get("main")
+            and now - max(b.get("indexed_at") or 0, b.get("used_at") or 0) > days * 86400
+            and drop_branch(b["repo"], b["branch"], f"not used for {days} days")]
+
+
+def expires_at(b: dict) -> float | None:
+    days = cfg.get("BRAIN_BRANCH_TTL_DAYS")
+    return max(b.get("indexed_at") or 0, b.get("used_at") or 0) + days * 86400 if days > 0 and not b.get("main") else None
+
+
 def webhook_info(r: dict, base: str) -> dict:
     """The repository's own webhook: URL, secret and where to enter them on GitLab / TFS."""
     url = f"{base}/webhooks/repo/{r['name']}"
     if r["provider"] == "tfs":
         how = ("TFS / Azure DevOps: Project settings > Service hooks > Web Hooks; triggers 'Pull request merge "
-               f"attempted' (target branch {r['branch']}) and optionally 'Code pushed'; URL above; basic "
-               "authentication: any user name, password = the secret.")
+               f"attempted' (target branch {r['branch']}) and 'Code pushed' (any branch: a deleted branch then "
+               "removes its overlay at once); URL above; basic authentication: any user name, password = the secret.")
     else:
         how = ("GitLab: project > Settings > Webhooks; URL above; Secret token = the secret; triggers 'Merge request "
-               f"events' and 'Push events' (branch filter {r['branch']}).")
+               "events' and 'Push events' on all branches (a deleted branch then removes its overlay at once).")
     return {"url": url, "secret": r["webhook_secret"], "provider": r["provider"], "how": how}
 
 
@@ -396,5 +525,6 @@ def overview(base: str = "") -> list[dict]:
                     "indexed": r["name"] in indexed, "nodes": indexed.get(r["name"], {}).get("nodes"),
                     "commit": s.get("commit"), "indexed_at": s.get("indexed_at"), "error": s.get("error"),
                     "vectors": s.get("vectors"),
-                    "branches": [b for b in st["branches"].values() if b["repo"] == r["name"]]})
+                    "branches": [{**b, "expires_at": expires_at(b)} for b in st["branches"].values()
+                                 if b["repo"] == r["name"]]})
     return out

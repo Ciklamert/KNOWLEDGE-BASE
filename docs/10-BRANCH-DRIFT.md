@@ -34,8 +34,47 @@ AI-BRAIN recommends even where it cannot act itself: rebasing and resolving conf
 `POST /api/repos/<repo>/branches {"branch": "feature/x"}` (UI: *Index a branch…* on the repository's row) fetches
 the pushed branch into a git worktree `data/worktrees/<repo>--<branch>` and indexes it as an extra project
 `<repo>--<branch>`, with its own code vectors. Every search, ask and enhance request with `branch=feature/x` then
-uses the overlay **instead of** `main` for that repository; other repositories in the set still use `main`. Remove
-the overlay after merging (✕ on the Repositories page, or `DELETE /api/repos/<repo>/branches/feature/x`).
+uses the overlay **instead of** the main branch for that repository; other repositories in the set still use theirs.
+
+**The main branch** is the repository's tracked branch: the *Main branch* column on the Repositories page (or
+`"branch"` in `repos.json`), `BRAIN_DEFAULT_BRANCH` (`main`) when empty. Each repository chooses its own (`main`,
+`master`, `develop` ...). Drift checks compare the branch with it.
+
+**Several main branches.** Many teams keep more than one long-lived branch: `main` for production, `develop` for
+integration, `release/2.0` for a version in maintenance. List the others in the *Other main branches* column (or
+`"mains"` in `repos.json`; `BRAIN_OTHER_MAIN_BRANCHES` for every repository that names none). Each one:
+- is indexed as a permanent overlay `<repo>--<branch>` at every update of the repository, when its head moved;
+- is updated at once by a webhook push or merge to it;
+- never expires, and is searched with `branch=develop` like any overlay.
+
+A feature branch is compared with **the main it derives from**: the main branch whose history the feature branch
+shares most (the fewest commits of the branch that the main does not have, `git rev-list --count
+origin/<main>..origin/<branch>`). The overlay records it as `base` (the Repositories page shows "from develop"),
+the drift check measures *behind* against it, and `brain drift` picks it the same way in the developer's checkout.
+`base` in `POST /api/repos/<repo>/branches` and `POST /api/drift`, or `brain drift --main develop`, sets it
+explicitly.
+
+**Cost.** The overlay's code graph is built from the whole worktree on the local CPU (about a minute per 5,000
+files, no API call), so calls between changed and unchanged files stay correct; later pushes re-parse only the
+changed files. Its code vectors cost almost nothing: every embedding is kept in the vector cache by model and text
+(`data/vectors.db`, `BRAIN_VECTOR_CACHE`), so the symbols the branch shares with the main branch, or with any other
+branch, are not sent to the API again. Only symbols the branch really changed are embedded.
+
+**Lifecycle.** An overlay is removed with its branch, in three ways:
+1. **Webhook, at once.** A branch deletion arrives as a push whose new commit is all zeros: GitLab `after` =
+   `0000…0`, TFS / Azure DevOps a `git.push` `refUpdates` entry with `newObjectId` = `0000…0`. A GitLab merge
+   request merged with *Delete source branch* also removes the source branch's overlay. The webhook needs push
+   events on all branches ([09](09-WEBHOOKS.md)).
+2. **Reconcile, the safety net.** After every update of the repository (scheduled, *Update*, webhook) AI-BRAIN runs
+   `git ls-remote --heads` once and removes the overlays whose branch no longer exists on the server. This catches
+   deletions that sent no webhook (hook down, GitLab skips push hooks for pushes touching more than three branches,
+   local remotes).
+3. **Expiry.** An overlay not indexed or searched for `BRAIN_BRANCH_TTL_DAYS` days (30; 0 = never) is removed. The
+   Repositories page shows each overlay's age and the date it expires.
+
+A push to a branch that has an overlay re-indexes the overlay (`BRAIN_BRANCH_UPDATE_ON_PUSH`). Removing by hand
+stays possible (✕ on the Repositories page, or `DELETE /api/repos/<repo>/branches/feature/x`). All these settings
+are on the Repositories page under *Updates & webhooks*, and in `.env`.
 
 ### 2.3 Enhance includes it
 `enhance_prompt` with `repo` and `branch` (plus `base_commit` and `changed_files` when available) runs the check

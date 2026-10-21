@@ -50,10 +50,18 @@ streams it to the UI.
 ## 4. brain/llm.py
 `chat(messages, model, timeout, max_tokens, temperature, tools)` returns the assistant message (content,
 tool_calls; a message may carry a picture for the vision model) and adds the call's token usage to the current
-thread's meter (`start_meter()`, `read_meter()`). `embed(texts)` uses `BRAIN_EMBEDDING_BASE_URL`/`_API_KEY` when set. `models()` lists `GET /models`
+thread's meter (`start_meter()`, `read_meter()`). `embed(texts)` takes the vectors it has from the vector cache
+(`vcache`) and sends only the other texts, using `BRAIN_EMBEDDING_BASE_URL`/`_API_KEY` when set. `models()` lists `GET /models`
 (cached for a minute). `check()` makes one tiny chat call and one embedding call and reports the real vector size.
 Errors are `LLMError` with the HTTP status, which the agent loop uses to detect gateways without tool calling. TLS:
 `BRAIN_CA_BUNDLE`, `BRAIN_VERIFY_TLS`; proxies from the environment are honoured.
+
+## 4b. brain/vcache.py and brain/ocr.py
+`vcache`: the persistent embedding cache `data/vectors.db` (SQLite; key = SHA-1 of model and text; int8 unit
+vector; day of last use). `get()`, `put()`, `prune()` (entries unused for `BRAIN_VECTOR_CACHE_DAYS`, called daily by
+`repos.refresh_stale()`), `stats()` (for `brain doctor`).
+`ocr`: `available()` (RapidOCR importable and `BRAIN_OCR` not `off`), `read(bytes)` (the text lines above
+`BRAIN_OCR_MIN_SCORE`; one picture at a time; the engine is loaded on first use).
 
 ## 5. brain/auth.py
 Session cookie `brain_session` = base64(user|expiry) + HMAC-SHA256; it becomes invalid when it expires or the
@@ -106,7 +114,7 @@ tests through TESTS edges and test paths.
 The document engine ([ADR-002](decisions/ADR-002-document-graph.md)); no model call per chunk.
 - Storage: one SQLite file `data/docs/docs.db` (tables `docs`, `chunks` with an int8 `vec` column, the FTS5 table
   `fts` (columns `body` and `stem`), `concepts` (with an int8 name vector), `mentions`, `links`, `rules`, `aliases`,
-  `cards`, `meta`) plus the pictures
+  `cards`, `meta`, `seen` = picture descriptions by SHA-1 and who made them: vision, ocr or decor) plus the pictures
   in `data/docs/assets/<doc>/`.
 - `fold()` (lower case, ı = i, accents removed) and `lower()` (lower case that keeps Turkish letters whole);
   `stem()` (Turkish: one case, plural or possessive suffix, one final vowel, consonant softening undone; English:
@@ -123,10 +131,14 @@ The document engine ([ADR-002](decisions/ADR-002-document-graph.md)); no model c
   concepts and links to and from other documents in one transaction (the document is searchable now), then starts
   `complete()` in the background. A document with the same name is replaced.
 - `complete()`: embeds the passages without a vector in batches (`BRAIN_EMBED_BATCH`, `BRAIN_EMBED_PARALLEL`) and
-  has the vision model describe the pictures not described yet (smaller than 1,600 pixels, JPEG); loops until nothing
-  is left; then `_embed_concepts()` embeds the concept names in batches and `_alias()` records the concepts that mean
+  gives the pictures a text (`_describe_pictures()`, oldest first: a cached description by SHA-1; `_decorative()`
+  skips pictures under `BRAIN_PICTURE_MIN_PX` or of nearly one colour (kind `decor`); the vision model within
+  `_vision_budget()` and `BRAIN_VLM_TIMEOUT`, sent at most 1,600 pixels as JPEG (kind `figure`); otherwise OCR
+  (kind `ocr`, upgraded to `figure` when the vision model answers later); `_picture_text()` re-derives the keyword
+  index, concepts and rules); loops until nothing is left; then `_embed_concepts()` embeds the concept names in batches and `_alias()` records the concepts that mean
   the same (`BRAIN_CONCEPT_SIM`; recomputed locally when the setting changes). Runs at start-up too, so an
-  interrupted or failed step is finished later. A different embedding model or dimension clears the vectors at start;
+  interrupted or failed step is finished later, and every 10 minutes (`_every()`), so pictures waiting for the
+  hourly budget or a failed call continue by themselves. A different embedding model or dimension clears the vectors at start;
   a stored index of an older analysis version is re-analysed from its passages (`reanalyse()`, no embedding of
   passages).
 - `search()`: FTS5 BM25 over the folded keywords and phrases, passage vectors (the query embedding is shared with the
@@ -231,7 +243,12 @@ code vectors, stale memories, state), `sync_all()` (one at a time), `request_syn
 update makes it run once more), `watch_local()` (re-indexes local checkouts whose tracked branch moved), `refresh_stale()` and `due()` (every
 repository at least every `BRAIN_SYNC_INTERVAL_MINUTES`, 24 hours by default),
 `hook_script()` (the git hook `brain hook` installs), `index_branch()` /
-`remove_branch()` (git worktrees), `state()` in `data/state.json`, `webhook_info()`, `overview()`.
+`remove_branch()` (git worktrees; an overlay records `main` or its `base`), `mains()` (the main branch, then
+`mains`), `_sync_mains()` (after every update: re-indexes other main branches whose head moved), `base_of()` (the
+main a branch derives from: fewest commits not shared), `request_branch()` (one index job per branch at a time), `drop_branch()`,
+`reconcile_branches()` (after every update: `git ls-remote --heads`, removes overlays of deleted branches),
+`expire_branches()` and `expires_at()` (`BRAIN_BRANCH_TTL_DAYS`, counted from the last index or search; searches record
+`used_at` at most hourly), `state()` in `data/state.json`, `webhook_info()`, `overview()`.
 
 ## 16. brain/drift.py
 `check()` fetches `main` and the branch, finds the merge-base, counts commits behind, builds the file sets and the
@@ -248,7 +265,8 @@ longer exist), `render()`. Stored in `data/memory/memories.json`.
 ## 17. brain/webhooks.py
 `repo_hook(name)` (the repository's own webhook; GitLab or TFS recognised from the request), `gitlab()` and `tfs()`
 (group-level hooks), `_norm()` (URL normalisation: scheme, credentials, `.git`, `/_git/`, ssh `:`), `match_repo()`
-(exact, then the last two path parts), `LOG` (the last 50 deliveries).
+(exact, then the last two path parts), `_other_branch()` (a deleted branch removes its overlay; a push to a branch
+with an overlay updates it), `LOG` (the last 50 deliveries).
 
 ## 18. brain/mcp.py
 `TOOLS` (18 tools with terse JSON schemas; the scope arguments are explained once in `INSTRUCTIONS`),

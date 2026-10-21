@@ -93,7 +93,8 @@ documents under **Documents** and connect your agents (`brain connect`). The ful
 - Windows 10/11 or Windows Server 2019+ (x64), or Linux x86-64 with glibc 2.17+.
 - Python 3.13 and git. All Python packages are bundled in `wheels/` (42 wheels, about 80 MB).
 - 4 CPU cores, 8 GB RAM (16 GB for large monorepos), 10 GB disk plus three times the size of the source code.
-- An OpenAI-compatible chat model and embedding model reachable from the server; a vision model is optional.
+- An OpenAI-compatible chat model and embedding model reachable from the server; a vision model is optional
+  (without it, or when it is slow, the optional local OCR in `wheels/ocr/` reads pictures and scans).
 
 ## Documentation
 
@@ -120,4 +121,5 @@ documents under **Documents** and connect your agents (`brain connect`). The ful
 | [docs/17-REQUIREMENTS-WRITER.md](docs/17-REQUIREMENTS-WRITER.md) | the requirements writer and its formats |
 | [docs/18-ENGINE-COMPARISON.md](docs/18-ENGINE-COMPARISON.md) | the code engine and the document engine compared with open-source alternatives |
 | [docs/19-REVIEW.md](docs/19-REVIEW.md) | review of the whole system, known limits and rating |
-| [docs/decisions/](docs/decisions/README.md) | architecture decision records ADR-001 to ADR-029 |
+| [docs/decisions/](docs/decisions/README.md) | architecture decision records ADR-001 to ADR-031 |
+| [docs/tr/](docs/tr/README.md) | **Türkçe dokümantasyon**: kurulum ve her bölümün nasıl çalıştığı |

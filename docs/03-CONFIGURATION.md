@@ -43,11 +43,15 @@ Repositories and repository sets live in `repos.json` (another file: `BRAIN_REPO
 | `BRAIN_EMBEDDING_BASE_URL` | (empty) | live | Only if embeddings live on a different URL. |
 | `BRAIN_EMBEDDING_API_KEY` | (empty) | live | Only if embeddings need a different key. Secret: never shown by the UI. |
 | `BRAIN_VLM_MODEL` | (empty) | live | Vision model (optional): describes pictures, charts and scanned pages in documents, one call per picture, after the text is already searchable. |
+| `BRAIN_VLM_TIMEOUT` | `90` | live | Seconds for one vision call. On timeout or error the picture is read by local OCR (when installed) and the vision model is tried again later. |
+| `BRAIN_VLM_MAX_PER_HOUR` | `60` | live | Most vision calls per hour (0 = no limit), oldest pictures first; the rest wait (OCR reads them meanwhile) and continue by themselves every 10 minutes. |
 | `BRAIN_CA_BUNDLE` | (empty) | live | Corporate CA certificate (PEM) for TLS interception. |
 | `BRAIN_VERIFY_TLS` | `true` | live | Verify TLS certificates of the corporate API. |
 | `BRAIN_LLM_TIMEOUT` | `120` | live | Default seconds for one chat/embedding HTTP call. |
 | `BRAIN_EMBED_BATCH` | `64` | live | Texts per embedding request (document passages, code symbols). |
 | `BRAIN_EMBED_PARALLEL` | `4` | live | Parallel embedding requests while indexing. |
+| `BRAIN_VECTOR_CACHE` | `true` | live | Keep every embedding in data/vectors.db, keyed by model and text, so a text already embedded (re-index, re-upload, new version, branch overlay) never costs another API call. |
+| `BRAIN_VECTOR_CACHE_DAYS` | `180` | live | Remove cached embeddings not used for N days (0 = keep forever). About 1 KB per text at 1024 dimensions. |
 | `BRAIN_AGENT_TOOL_CALLING` | `auto` | live | auto = use native tool calling, fall back if the gateway rejects it; native; off = one-shot with context. One of: `auto`, `native`, `off`. |
 
 ## Relevance
@@ -126,7 +130,10 @@ Repositories and repository sets live in `repos.json` (another file: `BRAIN_REPO
 | `BRAIN_SYNC_ON_START` | `true` | live | Clone/update and index all repositories when the server starts. |
 | `BRAIN_SYNC_INTERVAL_MINUTES` | `1440` | live | Update every repository whose last update is older than N minutes, whatever else happened (default 1440 = every 24 hours; 0 = off). Checked every minute, so it also catches up after a server restart. |
 | `BRAIN_WATCH_LOCAL_SECONDS` | `30` | live | Local-path repositories: every N seconds, check whether the tracked branch moved (git pull, merge, commit) and re-index it (0 = off). |
-| `BRAIN_DEFAULT_BRANCH` | `main` | live | Branch the code graph follows when a repository does not name one. |
+| `BRAIN_DEFAULT_BRANCH` | `main` | live | The main branch: the branch the code graph follows when a repository does not name its own (each repository can choose another on the Repositories page). Branch overlays are compared with it and reuse its vectors. |
+| `BRAIN_OTHER_MAIN_BRANCHES` | (empty) | live | Other main branches every repository keeps indexed next to its main branch, comma separated (for example develop, release/2.0), when the repository does not name its own on the Repositories page. Each is updated like the main branch and never expires; feature branches are compared with the main they derive from. |
+| `BRAIN_BRANCH_TTL_DAYS` | `30` | live | Remove a branch overlay not indexed or searched for N days (0 = keep until the branch is deleted). Overlays of deleted branches are removed at once by the webhook, or at the next update of the repository. |
+| `BRAIN_BRANCH_UPDATE_ON_PUSH` | `true` | live | A push to a branch that has an overlay re-indexes that overlay (needs push events on all branches in the webhook). |
 | `BRAIN_WEBHOOK_EVENTS` | `merge,push` | live | Events that trigger an update of the tracked branch: merge (MR/PR merged), push (any push to it). |
 | `BRAIN_GITLAB_WEBHOOK_SECRET` | (empty) | live | Group-level GitLab webhook secret (/webhooks/gitlab). Each repository also has its own webhook and secret. Secret: never shown by the UI. |
 | `BRAIN_TFS_WEBHOOK_USER` | (empty) | live | Group-level TFS service-hook user (/webhooks/tfs). |
@@ -166,4 +173,7 @@ Repositories and repository sets live in `repos.json` (another file: `BRAIN_REPO
 | `BRAIN_DOC_PROVIDER` | `docgraph` | docs | Document graph plug-in: a name in brain/providers or 'package.module:Class'. |
 | `BRAIN_DOC_CHUNK_CHARS` | `1500` | live | Largest passage in characters; documents are split along their headings, tables by rows. Applies to documents indexed afterwards (Documents > Re-index all applies it to every document). |
 | `BRAIN_CONCEPT_SIM` | `0.82` | live | Meaning similarity (0-1) at which two document concepts count as the same thing (synonyms, Turkish/English translations) and at which a question reaches a concept by meaning. Check aliases on the Document graph page; raise it if unrelated concepts are joined. |
+| `BRAIN_PICTURE_MIN_PX` | `120` | live | Pictures smaller than this on a side, or of nearly one colour, are skipped (logos, lines, spacers): no vision call, no OCR. |
+| `BRAIN_OCR` | `fallback` | live | Local OCR (RapidOCR, optional install from wheels/ocr): fallback = read a picture's text when there is no vision model, when the vision call fails or times out, or when the hourly vision budget is used up; off = never. One of: `fallback`, `off`. |
+| `BRAIN_OCR_MIN_SCORE` | `0.5` | live | OCR lines below this confidence (0-1) are left out. |
 | `BRAIN_CONCEPT_CODE_SIM` | `0.5` | live | Meaning similarity (0-1) at which search links a document concept to the code that implements it, through the stored multilingual code vectors (no API call). |

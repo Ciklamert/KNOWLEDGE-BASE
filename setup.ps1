@@ -43,6 +43,11 @@ $vpy = (Resolve-Path ".\.venv\Scripts\python.exe").Path
 Step "Python packages (offline, from wheels\)"
 & $vpy -m pip install --no-index --find-links wheels -r requirements.txt
 if ($LASTEXITCODE -ne 0) { throw "offline package install failed: is the wheels\ folder complete? (see docs/14-OFFLINE-PACKAGING.md)" }
+if (Test-Path wheels\ocr) {
+  Step "OCR fallback (optional, from wheels\ocr\)"
+  & $vpy -m pip install --no-index --no-deps --find-links wheels\ocr -r requirements-ocr.txt
+  if ($LASTEXITCODE -ne 0) { Write-Host "OCR fallback not installed; pictures are described only by the vision model" }
+}
 
 Step "Code graph engine (codebase-memory-mcp)"
 $zip = "bin\codebase-memory-mcp-windows-amd64.zip"

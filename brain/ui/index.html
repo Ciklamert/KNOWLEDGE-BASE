@@ -221,8 +221,10 @@
 
     <h2 class="sub">Add or edit repositories</h2>
     <p class="muted">Git <b>URL</b> (the server clones and follows it): <code>gitlab:group/project</code>, <code>tfs:Project/repo</code> (servers below) or a full URL; or a local <b>path</b> on the server.
-      Provider decides the webhook format (auto-detected when empty). A token is only needed when this repository needs other credentials than its server's.</p>
-    <table class="tbl edit"><thead><tr><th>Name</th><th>Provider</th><th>Git URL</th><th>Local path</th><th>Branch</th><th>Own token (optional)</th><th></th></tr></thead><tbody id="r-edit"></tbody></table>
+      Provider decides the webhook format (auto-detected when empty). A token is only needed when this repository needs other credentials than its server's.
+      <b>Main branch</b> is the branch the code graph follows (empty = BRAIN_DEFAULT_BRANCH); branch overlays are compared with it and reuse its vectors, so only changed code is embedded again.
+      <b>Other main branches</b> (for example <code>develop, release/2.0</code>; empty = BRAIN_OTHER_MAIN_BRANCHES) are indexed and updated like the main branch and never expire; a feature branch is compared with the main it derives from.</p>
+    <table class="tbl edit"><thead><tr><th>Name</th><th>Provider</th><th>Git URL</th><th>Local path</th><th title="The branch the code graph follows; branch overlays are compared with it and reuse its vectors">Main branch</th><th title="Other long-lived main branches (develop, release/…), comma separated: each is kept indexed and feature branches are compared with the main they derive from">Other main branches</th><th>Own token (optional)</th><th></th></tr></thead><tbody id="r-edit"></tbody></table>
     <div class="row"><button id="r-add" class="ghost">Add repository</button><button id="r-save">Save repositories and sets</button></div>
 
     <h2 class="sub">Repository sets</h2>

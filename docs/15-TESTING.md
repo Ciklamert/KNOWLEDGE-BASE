@@ -16,6 +16,11 @@ The script exits with the number of failures. It checks:
 - repositories: `gitlab:` and `tfs:` shorthands, credentials chosen by host, `{gitlab: …}` fields, webhook
   matching, per-repository secrets generated and kept, providers detected, sets stored, unknown set members
   rejected, the own webhook rejecting a wrong GitLab secret and accepting a TFS secret;
+- branch overlays: a GitLab and a TFS branch deletion remove the overlay, reconcile removes overlays whose branch is
+  gone from `git ls-remote`, an overlay unused for `BRAIN_BRANCH_TTL_DAYS` expires;
+- the vector cache: only texts not embedded before reach the API, separately per embedding model;
+- pictures: a tiny picture is skipped, OCR reads a picture when the vision call fails, the vision description
+  replaces the OCR text later, the same picture in another document costs no call, the hourly vision budget;
 - document conversion: Word, HTML, CSV and code to Markdown, tables as Markdown tables; binary files rejected; a Word file without an
   extension or with a wrong one recognised by its content; notebook, e-mail with an attachment, zip archive and RSS
   feed converted; PDF page headers and footers removed;
@@ -34,8 +39,8 @@ The script exits with the number of failures. It checks:
 - the document engine: folding of Turkish letters, passages split along headings and pages, tables split with
   their header repeated, concepts (title phrases, acronyms, identifiers, definitions from glossaries), upload,
   search (keywords and concepts), graph and delete;
-- the decision records, the bundled wheels (Python 3.13 only), the required files, and every Markdown link in the
-  documentation resolves;
+- the decision records, the bundled wheels (Python 3.13 only), the OCR pack (a wheel for every pin), the required
+  files, and every Markdown link in the documentation resolves;
 - the documentation describes the system as it is (no change-history wording).
 
 ## 2. End-to-end test (real engines; mock or real corporate API)

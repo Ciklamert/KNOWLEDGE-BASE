@@ -387,8 +387,19 @@ def main():
         r = c.post("/api/search", json={"query": "discount amount", "scope": "code", "branch": "feature/discount"}).json()
         check("branch overlay is searched for that branch", any(h["name"] == "discount" for h in r["code"]),
               [(h["project"], h["name"]) for h in r["code"]])
-        r = c.delete(f"/api/repos/{a.repo}/branches/feature/discount")
-        check("branch overlay removed", r.status_code == 200, r.text[:200])
+        ov = next(x for x in c.get("/api/repos").json()["repos"] if x["name"] == a.repo)["branches"]
+        check("branch overlay shows its expiry", ov and ov[0].get("expires_at"), ov)
+        r = anon.post(f"/webhooks/repo/{a.repo}", json={"object_kind": "push", "ref": "refs/heads/feature/discount",
+                                                        "after": "1" * 40}, headers={"X-Gitlab-Token": own["secret"]})
+        check("a push to an overlay's branch updates the overlay", r.status_code == 202, r.text)
+        if r.status_code == 202 and r.json().get("job"):
+            wait_job(c, r.json()["job"], 600)
+        git(origin, "branch", "-D", "feature/discount")
+        r = anon.post(f"/webhooks/repo/{a.repo}", json={"object_kind": "push", "ref": "refs/heads/feature/discount",
+                                                        "after": "0" * 40}, headers={"X-Gitlab-Token": own["secret"]})
+        ov = next(x for x in c.get("/api/repos").json()["repos"] if x["name"] == a.repo)["branches"]
+        check("a deleted branch's overlay is removed by the webhook", r.status_code == 200 and r.json().get("ok") and not ov,
+              (r.text, ov))
 
         # a local checkout is re-indexed after every pull of its tracked branch
         local = origin.parent / "local-checkout"

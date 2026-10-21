@@ -352,7 +352,7 @@ async def api_drift(body: dict = Body(...)):
     if not body.get("repo"):
         raise HTTPException(400, "repo is required")
     rep = await _run(drift.check, body["repo"], body.get("branch"), body.get("base_commit"),
-                     body.get("changed_files"), body.get("head_commit"))
+                     body.get("changed_files"), body.get("head_commit"), body.get("base"))
     return {**rep, "markdown": drift.render(rep)}
 
 
@@ -370,8 +370,8 @@ async def repo_list(request: Request):
 @app.put("/api/repos")
 async def repo_save(body: dict = Body(...)):
     """Save repositories and sets: {"repos": [...], "sets": {"name": ["repo", ...]}}. A repository that is new, or
-    whose URL, path or tracked branch changed, is indexed at once (`job`)."""
-    where = lambda r: (r["provider"], r["url"], r["path"], r["branch"])
+    whose URL, path or main branches changed, is indexed at once (`job`)."""
+    where = lambda r: (r["provider"], r["url"], r["path"], r["branch"], r["mains"])
     before = {r["name"]: where(r) for r in repos.all_repos()}
     saved = await _run(cfg.save_repos, body.get("repos", []), body.get("sets"))
     changed = [r["name"] for r in saved["repos"] if before.get(r["name"]) != where(r)]
@@ -400,8 +400,8 @@ def repo_branch(name: str, body: dict = Body(...)):
     branch = str(body.get("branch", "")).strip()
     if not branch:
         raise HTTPException(400, "branch is required")
-    job = jobs.start("branch", f"Index branch {name}@{branch}", lambda j: repos.index_branch(name, branch, j))
-    return {"job": job.id}
+    job = repos.request_branch(name, branch, base=str(body.get("base") or "").strip() or None)
+    return {"job": job.id if job else None, "queued": job is None}
 
 
 @app.delete("/api/repos/{name}/branches/{branch:path}")

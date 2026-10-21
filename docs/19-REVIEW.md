@@ -81,7 +81,8 @@ event stream as soon as something changes, without reloading.
 - **Token counts** come from the gateway's `usage` field; a gateway that does not send it shows only the call count.
 - **Code vectors cost**: the first sync embeds every symbol once; on a slow gateway set `BRAIN_CODE_VECTORS=local`.
 - **Documents**: borderless tables and complex multi-column PDF layouts convert less well; scanned PDFs without a
-  text layer are understood only through the vision model's page descriptions.
+  text layer are understood through the vision model's page descriptions, or, without it, through local OCR, which
+  loses Turkish accents (search folds them anyway) and misses some lines on poor scans.
 - **One document graph** for all sets; separate document spaces need a second instance.
 
 ## 8. Rating

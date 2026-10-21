@@ -554,7 +554,8 @@ function editRow(r = {}) {
     <td><select data-k="provider">${PROVIDERS.map((p) => `<option value="${p}" ${p === (r.provider || "") ? "selected" : ""}>${p || "auto"}</option>`).join("")}</select></td>
     <td><input data-k="url" value="${esc(r.url || "")}" placeholder="gitlab:group/project · tfs:Project/repo · full URL"></td>
     <td><input data-k="path" value="${esc(r.path || "")}" placeholder="or D:\\src\\billing"></td>
-    <td><input data-k="branch" value="${esc(r.branch || "main")}" size="8"></td>
+    <td><input data-k="branch" value="${esc(r.branch || "")}" placeholder="default" size="8"></td>
+    <td><input data-k="mains" value="${esc((r.mains || []).join(", "))}" placeholder="develop, release/2.0" size="14"></td>
     <td><input data-k="token" type="password" autocomplete="new-password" placeholder="${r.token_set ? "•••• set (type to replace)" : "server token"}"></td>
     <td><button class="del" title="Remove row">✕</button></td>`
   tr.dataset.secret = r.webhook_secret || ""
@@ -607,11 +608,11 @@ function hookCell(r) {
 REFRESH.repos = async (rebuild) => {
   await loadRepos()
   $("#r-list").innerHTML = `<table class="tbl"><thead><tr><th>Repository</th><th>Indexed</th><th>Sets</th><th>Webhook (own URL and secret)</th><th>Branch overlays</th><th></th></tr></thead><tbody>${
-    REPOS.map((r) => `<tr><td><b>${esc(r.name)}</b> <span class="muted">→ ${esc(r.branch)}</span><div class="muted">${esc(r.remote || r.path)}</div>${r.error ? `<div class="alert">${esc(r.error)}</div>` : ""}</td>
+    REPOS.map((r) => `<tr><td><b>${esc(r.name)}</b> <span class="muted" title="main branches">→ ${esc([r.branch, ...(r.mains || [])].join(", "))}</span><div class="muted">${esc(r.remote || r.path)}</div>${r.error ? `<div class="alert">${esc(r.error)}</div>` : ""}</td>
       <td>${r.indexed ? `${fmt(r.nodes)} symbols${r.vectors && r.vectors.symbols ? `<div class="muted">${fmt(r.vectors.symbols)} code vectors</div>` : ""}<div class="muted">${esc((r.commit || "").slice(0, 10))} · ${ago(r.indexed_at)}</div>` : "<span class='st pending'>not yet</span>"}</td>
       <td>${(r.sets || []).map((s) => `<span class="tag">${esc(s)}</span>`).join("")}</td>
       <td>${hookCell(r)}</td>
-      <td>${r.branches.map((b) => `<div><code>${esc(b.branch)}</code> <button class="del small" data-rm="${esc(r.name)}|${esc(b.branch)}">✕</button></div>`).join("")}
+      <td>${r.branches.map((b) => `<div><code>${esc(b.branch)}</code> ${b.main ? `<span class="tag" title="another main branch: kept and updated like the main branch">main</span>` : b.base ? `<span class="muted">from ${esc(b.base)}</span>` : ""} <span class="muted" title="last indexed · removed when the branch is deleted${b.expires_at ? " or on this date if unused" : ""}">${ago(b.indexed_at)}${b.expires_at ? ` · until ${new Date(b.expires_at * 1000).toLocaleDateString()}` : ""}</span> <button class="del small" data-rm="${esc(r.name)}|${esc(b.branch)}">✕</button></div>`).join("")}
         <button class="ghost small" data-ov="${esc(r.name)}">Index a branch…</button></td>
       <td><button class="ghost small" data-sync="${esc(r.name)}">Update</button></td></tr>`).join("") || `<tr><td colspan="6" class="muted">No repositories configured. Add one below.</td></tr>`}</tbody></table>`
   $$("[data-copy]").forEach((b) => (b.onclick = () => navigator.clipboard.writeText(b.dataset.copy).then(() => toast("Copied"), () => toast("Copy failed"))))
@@ -619,6 +620,7 @@ REFRESH.repos = async (rebuild) => {
   $$("[data-ov]").forEach((b) => (b.onclick = async () => {
     const br = prompt("Branch to index as an overlay (it must be pushed):"); if (!br) return
     const { job } = await api(`/api/repos/${b.dataset.ov}/branches`, { method: "POST", json: { branch: br } })
+    if (!job) return toast("That branch is already being indexed")
     toast("Indexing branch…"); followJob(job, $("#d-out")).then(() => { toast("Branch overlay ready"); REFRESH.repos() }, (e) => toast(e.message))
   }))
   $$("[data-rm]").forEach((b) => (b.onclick = async () => { const [n, br] = b.dataset.rm.split("|")

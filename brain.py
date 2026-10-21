@@ -86,8 +86,17 @@ def _git(path: Path, *args) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def local_git_facts(path: Path, main: str = "main") -> dict:
-    """What the server needs to judge drift, computed in the developer's own checkout."""
+def local_git_facts(path: Path, main: str | None = None, candidates: list[str] | None = None) -> dict:
+    """What the server needs to judge drift, computed in the developer's own checkout. Without `main`, the main
+    branch HEAD derives from is the candidate with the fewest commits HEAD does not share."""
+    if not main:
+        best = (float("inf"), "main")
+        for m in candidates or ["main"]:
+            _git(path, "fetch", "--quiet", "origin", m)
+            n = _git(path, "rev-list", "--count", f"origin/{m}..HEAD")
+            if n.isdigit() and int(n) < best[0]:
+                best = (int(n), m)
+        main = best[1]
     _git(path, "fetch", "--quiet", "origin", main)
     branch = _git(path, "rev-parse", "--abbrev-ref", "HEAD")
     base = _git(path, "merge-base", "HEAD", f"origin/{main}")
@@ -95,7 +104,7 @@ def local_git_facts(path: Path, main: str = "main") -> dict:
     changed |= {ln[3:].split(" -> ")[-1] for ln in _git(path, "status", "--porcelain").splitlines() if len(ln) > 3}
     url = _git(path, "remote", "get-url", "origin")
     return {"branch": branch, "base_commit": base or None, "head_commit": _git(path, "rev-parse", "HEAD"),
-            "changed_files": sorted(x for x in changed if x), "remote": url}
+            "changed_files": sorted(x for x in changed if x), "remote": url, "main": main}
 
 
 def _guess_repo(remote: str, path: Path) -> str:
@@ -108,12 +117,22 @@ def _guess_repo(remote: str, path: Path) -> str:
     sys.exit(f"cannot tell which configured repository {path} is; pass --repo NAME")
 
 
+def repo_facts(path: Path, repo: str | None, main: str | None = None) -> tuple[dict, str]:
+    """The local git facts of a checkout and its configured repository; without --main, the base is the nearest of
+    the repository's main branches."""
+    if not _git(path, "rev-parse", "--abbrev-ref", "HEAD"):
+        sys.exit(f"{path} is not a git checkout")
+    repo = repo or _guess_repo(_git(path, "remote", "get-url", "origin"), path)
+    info = next((r for r in api("GET", "/api/repos")["repos"] if r["name"] == repo), {})
+    return local_git_facts(path, main, [info.get("branch") or "main", *info.get("mains", [])]), repo
+
+
 def cmd_enhance(a):
     body = {"prompt": " ".join(a.prompt), "set": a.set, "branch": a.branch}
     if a.path:
-        facts = local_git_facts(Path(a.path).resolve())
-        body.update(repo=a.repo or _guess_repo(facts["remote"], Path(a.path).resolve()), branch=facts["branch"],
-                    base_commit=facts["base_commit"], changed_files=facts["changed_files"])
+        facts, repo = repo_facts(Path(a.path).resolve(), a.repo)
+        body.update(repo=repo, branch=facts["branch"], base_commit=facts["base_commit"],
+                    changed_files=facts["changed_files"])
     r = api("POST", "/api/enhance", body)
     print(r["enhanced"])
     print(f"\n-- {r['ms']} ms, llm: {r['llm']}, tools: {[s['tool'] for s in r['steps']]}, notes: {r['errors']}",
@@ -161,13 +180,9 @@ def cmd_hook(a):
 
 
 def cmd_drift(a):
-    path = Path(a.path).resolve()
-    facts = local_git_facts(path, a.main)
-    if not facts["branch"]:
-        sys.exit(f"{path} is not a git checkout")
-    repo = a.repo or _guess_repo(facts["remote"], path)
-    r = api("POST", "/api/drift", {"repo": repo, **{k: facts[k] for k in ("branch", "base_commit", "head_commit",
-                                                                          "changed_files")}})
+    facts, repo = repo_facts(Path(a.path).resolve(), a.repo, a.main)
+    r = api("POST", "/api/drift", {"repo": repo, "base": facts["main"], **{k: facts[k] for k in (
+        "branch", "base_commit", "head_commit", "changed_files")}})
     print(r["markdown"])
 
 
@@ -177,10 +192,8 @@ def cmd_impact(a):
     files = a.files
     repo = a.repo
     if not files:
-        facts = local_git_facts(path, a.main)
-        if not facts["branch"]:
-            sys.exit(f"{path} is not a git checkout; pass the changed files")
-        files, repo = facts["changed_files"], repo or _guess_repo(facts["remote"], path)
+        facts, repo = repo_facts(path, repo, a.main)
+        files = facts["changed_files"]
     if not files:
         sys.exit("no changed files")
     print(api("POST", "/api/impact", {"files": files, "repos": [repo] if repo else None})["markdown"])
@@ -246,6 +259,13 @@ def cmd_doctor(_):
             row(f"python package {mod}", True)
         except ImportError:
             row(f"python package {mod}", False, "re-run setup")
+    from brain import ocr, vcache
+    row("OCR fallback (optional)", ocr.available() or None,
+        "RapidOCR installed" if ocr.available() else
+        ("BRAIN_OCR=off" if cfg.get("BRAIN_OCR") == "off" else "not installed: ship wheels/ocr and re-run setup"))
+    if cfg.get("BRAIN_VECTOR_CACHE"):
+        st = vcache.stats()
+        row("embedding cache", True, f"{st['vectors']} vectors, {st['mb']} MB in data/vectors.db")
     row("git", bool(_git(ROOT, "--version") or subprocess.run(["git", "--version"], capture_output=True).returncode == 0))
     try:
         repos = cfg.load_repos()
@@ -292,13 +312,13 @@ def main():
     p = sub.add_parser("drift")
     p.add_argument("path", nargs="?", default=".")
     p.add_argument("--repo")
-    p.add_argument("--main", default="main")
+    p.add_argument("--main", help="the main branch you branched from (default: the nearest one)")
     p.set_defaults(f=cmd_drift)
     p = sub.add_parser("impact")
     p.add_argument("files", nargs="*")
     p.add_argument("--repo")
     p.add_argument("--path", default=".")
-    p.add_argument("--main", default="main")
+    p.add_argument("--main", help="the main branch you branched from (default: the nearest one)")
     p.set_defaults(f=cmd_impact)
     p = sub.add_parser("hook")
     p.add_argument("path", nargs="?", default=".")

@@ -34,3 +34,5 @@ Each record states the context, the decision, the alternatives considered and th
 | [ADR-027](ADR-027-daily-refresh.md) | Every repository is updated at least every 24 hours |
 | [ADR-028](ADR-028-agent-needs.md) | What autonomous agents need: one-call search, impact and decision memory |
 | [ADR-029](ADR-029-document-grammar.md) | A grammar for official and technical documents (the tree-sitter idea) |
+| [ADR-030](ADR-030-api-economy-branches-pictures.md) | Never pay the slow API twice; branch overlays that clean themselves up; pictures with an OCR fallback |
+| [ADR-031](ADR-031-several-main-branches.md) | Several main branches per repository; a branch is compared with the main it derives from |

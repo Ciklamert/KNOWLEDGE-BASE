@@ -46,7 +46,8 @@ TLS at a reverse proxy (IIS ARR, nginx) and set `BRAIN_HOST=127.0.0.1`.
 
 ## 6. Data
 Uploaded documents, converted Markdown, indexed code and all indexes stay under `data/` on the server. Content
-leaves the server only towards the corporate API: document passages for embedding, pictures for the vision model, code symbol texts
+leaves the server only towards the corporate API: document passages for embedding, pictures for the vision model
+(local OCR, when installed, reads pictures on the server itself), code symbol texts
 for the multilingual code vectors, prompts with retrieved context for the agents. Setting
 `BRAIN_CODE_VECTORS=local` keeps all code on the server.
 

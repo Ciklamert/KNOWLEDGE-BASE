@@ -19,7 +19,11 @@ embedding pass, even on a slow corporate API:
                (synonyms, Turkish/English translations) become aliases, a question reaches a concept by meaning, and
                search links a concept to the code that implements it through the stored code vectors;
   * pictures   embedded images, scanned pages and drawn charts are described by the vision model (BRAIN_VLM_MODEL)
-               AFTER the text is searchable: one call per picture, never one per chunk.
+               AFTER the text is searchable: one call per picture, never one per chunk, at most BRAIN_VLM_MAX_PER_HOUR,
+               oldest first. A picture seen before (same bytes, any document) reuses its description; tiny or
+               one-colour pictures are skipped. Local OCR (ocr.py) reads the text of a picture at once when there is
+               no vision model, when the vision call fails or times out, or when the hourly budget is used up; the
+               vision model adds its description later.
 Search (no chat call): BM25 + vectors + concept graph, fused by reciprocal rank; the answer carries the passages with
 their document, section and page, the business rules in them, the concepts with their definitions and aliases, and
 facts (sentences that join two concepts).
@@ -42,7 +46,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .. import jobs, llm, query as qa
+from .. import jobs, llm, ocr as _ocr, query as qa
 from .. import settings as cfg
 from . import DocGraph, convert, docgrammar as dgr
 
@@ -74,6 +78,7 @@ CREATE INDEX IF NOT EXISTS refs_target ON refs(target);
 CREATE INDEX IF NOT EXISTS refs_key ON refs(key);
 CREATE TABLE IF NOT EXISTS defs(id INTEGER PRIMARY KEY, doc TEXT, unit INT, term TEXT, key TEXT, text TEXT);
 CREATE INDEX IF NOT EXISTS defs_key ON defs(key);
+CREATE TABLE IF NOT EXISTS seen(sha TEXT PRIMARY KEY, text TEXT, by TEXT, at REAL) WITHOUT ROWID;
 """
 RULE_SLOTS = ("actor", "action", "object", "condition", "exception", "unit", "confidence")
 ANALYSIS = "3"   # version of the concept and rule analysis; a stored index of another version is re-analysed
@@ -103,6 +108,7 @@ LIMIT = re.compile(rf"(?:(?:en\s+az|en\s+fazla|en\s+geç|at\s+least|at\s+most|up
                    rf"less\s+than|over|above|below|under|within|maximum|minimum)\s+)?(?:(?:%|yüzde)\s*{NUMBER}|{NUMBER}\s*{UNIT}"
                    rf"(?:['’]?[a-zçğıöşü]{{0,4}})?)(?:\s+(?:üzeri\w*|üstü\w*|altı\w*|içinde\w*|içerisinde|sonra\w*|önce\w*|"
                    rf"fazla\w*|az\w*|kadar|aşan|geçen|geçmeyen|or\s+more|or\s+less))?", re.I)
+OCR_LABEL = "Text in the picture (OCR):"
 VISION_PROMPT = ("This picture is from the document \"{doc}\" (section: {path}). For search, write in plain text: all "
                  "visible text exactly as written; what the chart, diagram, table or photo shows, with its labels and "
                  "values. Use the document's language. No preamble.")
@@ -471,7 +477,17 @@ class Provider(DocGraph):
         self.state, self.detail = "ready", f"{n} document(s)"
         if stale:
             self.reanalyse()   # concepts and rules from the stored passages; text and vectors are kept
-        threading.Thread(target=self.complete, daemon=True, name="docgraph-complete").start()
+        threading.Thread(target=self._every, daemon=True, name="docgraph-complete").start()
+
+    def _every(self) -> None:
+        """complete() at start, then every 10 minutes: finishes what waited for the API (a failed or slow call, the
+        hourly vision budget) without a new upload."""
+        while self.db is not None:
+            try:
+                self.complete()
+            except Exception as exc:   # stopped meanwhile, or a bug: try again at the next round
+                self._say(f"completion failed: {exc}", busy=False)
+            time.sleep(600)
 
     def stop(self) -> None:
         with self.lock:
@@ -906,7 +922,7 @@ class Provider(DocGraph):
             while True:
                 api = bool(cfg.get("BRAIN_EMBEDDING_MODEL") and cfg.get("BRAIN_LLM_BASE_URL"))
                 vectors = self._embed_missing() if api else 0
-                pictures = self._describe_pictures() if cfg.get("BRAIN_VLM_MODEL") else 0
+                pictures = self._describe_pictures()
                 concepts = self._embed_concepts() if api else 0
                 if vectors <= 0 and pictures <= 0 and concepts <= 0:
                     break
@@ -1005,41 +1021,88 @@ class Provider(DocGraph):
                 for r in self._q(f"SELECT name, vec FROM concepts WHERE name IN ({q}) AND vec IS NOT NULL", tuple(names))}
 
     def _describe_pictures(self) -> int:
-        """Describes the pictures not described yet (kind picture -> figure); returns how many (-1 on API failure)."""
-        rows = self._q("""SELECT c.id, c.doc, c.asset, c.path, c.text, d.name FROM chunks c JOIN docs d ON d.id = c.doc
-                          WHERE c.kind = 'picture' AND c.asset IS NOT NULL""")
+        """Gives every picture a text, oldest first; returns how many changed (-1 when the vision call failed).
+        Kinds: picture (waiting) -> figure (vision description, final) | ocr (OCR text, upgraded by the vision model
+        later) | decor (tiny or one colour, skipped). Descriptions are cached by the picture's SHA-1 (table seen)."""
+        vision = bool(cfg.get("BRAIN_VLM_MODEL") and cfg.get("BRAIN_LLM_BASE_URL"))
+        ocr_ok = _ocr.available()
+        kinds = "('picture', 'ocr')" if vision else "('picture')"
+        rows = self._q(f"""SELECT c.id, c.doc, c.asset, c.path, c.text, c.kind, d.name FROM chunks c JOIN docs d
+                           ON d.id = c.doc WHERE c.kind IN {kinds} AND c.asset IS NOT NULL
+                           ORDER BY c.kind = 'ocr', c.id""")
+        done, failed = 0, False
         for n, r in enumerate(rows, 1):
             f = self.assets / r["doc"] / r["asset"]
             if not f.exists():
                 continue
-            self._say(f"describing pictures {n}/{len(rows)} ({r['name']})")
-            try:
-                text = llm.chat([{"role": "user", "content": [
-                    {"type": "text", "text": VISION_PROMPT.format(doc=r["name"], path=r["path"] or "-")},
-                    {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + _small_jpeg(f.read_bytes())}}]}],
-                    cfg.get("BRAIN_VLM_MODEL"), max_tokens=700, temperature=0)["content"]
-            except llm.LLMError as exc:
-                self._say(f"picture descriptions postponed: {exc}")
-                return -1
-            body = f"{r['text']}\n{text}".strip()
-            with self.lock:
-                self.db.execute("UPDATE chunks SET text = ?, kind = 'figure', vec = NULL WHERE id = ?", (body, r["id"]))
-                full = f"{r['name']} {r['path']} {body}"
-                self.db.execute("UPDATE fts SET body = ?, stem = ? WHERE rowid = ?", (fold(full), stemmed(full, _turkish(body)), r["id"]))
+            data = f.read_bytes()
+            sha = hashlib.sha1(data).hexdigest()
+            hit = {x["by"]: x["text"] for x in self._q("SELECT by, text FROM seen WHERE sha = ?", (sha,))}
+            if "vision" in hit:
+                done += self._picture_text(r, hit["vision"], "figure")
+                continue
+            if r["kind"] == "picture" and ("decor" in hit or _decorative(data)):
+                self._seen(sha, "", "decor")
+                done += self._picture_text(r, "", "decor")
+                continue
+            if vision and not failed and _vision_budget():
+                self._say(f"describing pictures {n}/{len(rows)} ({r['name']})")
+                try:
+                    text = llm.chat([{"role": "user", "content": [
+                        {"type": "text", "text": VISION_PROMPT.format(doc=r["name"], path=r["path"] or "-")},
+                        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + _small_jpeg(data)}}]}],
+                        cfg.get("BRAIN_VLM_MODEL"), timeout=cfg.get("BRAIN_VLM_TIMEOUT"), max_tokens=700,
+                        temperature=0)["content"]
+                    self._seen(sha, text, "vision")
+                    done += self._picture_text(r, text, "figure")
+                    continue
+                except llm.LLMError as exc:   # timeout, gateway error, model without vision: OCR now, vision later
+                    self._say(f"picture descriptions postponed: {exc}")
+                    failed = True
+            if r["kind"] != "picture" or not ocr_ok:
+                continue
+            if "ocr" not in hit:
+                self._say(f"reading pictures with OCR {n}/{len(rows)} ({r['name']})")
+                try:
+                    hit["ocr"] = _ocr.read(data)
+                except Exception as exc:
+                    self._say(f"OCR failed on {r['asset']}: {exc}")
+                    continue
+                self._seen(sha, hit["ocr"], "ocr")
+            done += self._picture_text(r, f"{OCR_LABEL}\n{hit['ocr']}" if hit["ocr"] else "", "ocr")
+        return -1 if failed and not done else done
+
+    def _seen(self, sha: str, text: str, by: str) -> None:
+        with self.lock:
+            self.db.execute("INSERT OR REPLACE INTO seen VALUES (?,?,?,?)", (sha, text, by, time.time()))
+            self.db.commit()
+
+    def _picture_text(self, r, text: str, kind: str) -> int:
+        """Sets a picture passage's text (its alt text and caption, then `text`) and kind, and re-derives its keyword
+        index, concepts and rules; the vector is embedded again by the next pass."""
+        caption = r["text"].split(OCR_LABEL, 1)[0].strip()
+        body = f"{caption}\n{text}".strip()
+        with self.lock:
+            self.db.execute("UPDATE chunks SET text = ?, kind = ?, vec = NULL WHERE id = ?", (body, kind, r["id"]))
+            full = f"{r['name']} {r['path']} {body}"
+            self.db.execute("UPDATE fts SET body = ?, stem = ? WHERE rowid = ?",
+                            (fold(full), stemmed(full, _turkish(body)), r["id"]))
+            if r["kind"] == "picture":
                 self.db.execute("UPDATE docs SET described = described + 1 WHERE id = ?", (r["doc"],))
-                turkish = qa.analyze(text[:2000])["language"] in ("tr", "mixed")
-                for _, (cname, kind) in list(concepts_in(text, _stop()).items())[:20]:
-                    key = concept_key(cname, turkish, kind)
-                    self.db.execute("INSERT OR IGNORE INTO concepts(key, name, kind) VALUES (?,?,?)", (key, cname, kind))
+            self.db.execute("DELETE FROM rules WHERE chunk = ?", (r["id"],))
+            if text:
+                turkish = qa.analyze(body[:2000])["language"] in ("tr", "mixed")
+                for _, (cname, ckind) in list(concepts_in(text, _stop()).items())[:20]:
+                    key = concept_key(cname, turkish, ckind)
+                    self.db.execute("INSERT OR IGNORE INTO concepts(key, name, kind) VALUES (?,?,?)", (key, cname, ckind))
                     self.db.execute("INSERT OR IGNORE INTO mentions SELECT id, ? FROM concepts WHERE key = ?", (r["id"], key))
-                for rule in rules_in("figure", text):
+                for rule in rules_in("figure", body):
                     self.db.execute("INSERT INTO rules(chunk, kind, modality, text, limits) VALUES (?,?,?,?,?)",
                                     (r["id"], rule["kind"], rule["modality"], rule["text"], "; ".join(rule["limits"])))
-                self.db.commit()
-                self.version += 1
-                jobs.tick()
-            jobs.tick()
-        return len(rows)
+            self.db.commit()
+            self.version += 1
+        jobs.tick()
+        return 1
 
     def delete(self, doc_ids: list[str], keep_files: bool = False) -> dict:
         removed = []
@@ -1313,6 +1376,33 @@ class Provider(DocGraph):
 
 def _stop() -> set[str]:
     return {fold(w) for w in qa._stopwords()}
+
+
+_vlm_calls: list[float] = []   # times of the vision calls in the last hour
+
+
+def _vision_budget() -> bool:
+    """True (and counted) when one more vision call fits in BRAIN_VLM_MAX_PER_HOUR (0 = no limit)."""
+    cap, now = cfg.get("BRAIN_VLM_MAX_PER_HOUR"), time.time()
+    _vlm_calls[:] = [t for t in _vlm_calls if now - t < 3600]
+    if cap > 0 and len(_vlm_calls) >= cap:
+        return False
+    _vlm_calls.append(now)
+    return True
+
+
+def _decorative(data: bytes) -> bool:
+    """A picture not worth a description: smaller than BRAIN_PICTURE_MIN_PX on a side, or nearly one colour
+    (spacers, rules, plain backgrounds)."""
+    from PIL import Image, ImageStat
+    try:
+        img = Image.open(io.BytesIO(data))
+        if min(img.size) < cfg.get("BRAIN_PICTURE_MIN_PX"):
+            return True
+        img.thumbnail((128, 128))
+        return ImageStat.Stat(img.convert("L")).stddev[0] < 4
+    except Exception:
+        return False
 
 
 def _small_jpeg(data: bytes, edge: int = 1600) -> str:

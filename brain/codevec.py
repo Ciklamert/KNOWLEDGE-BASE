@@ -90,7 +90,8 @@ def update(project: str, log=lambda msg, progress=None: None) -> dict:
         done[0] += len(chunk)
         log(f"{project}: code vectors {done[0]}/{len(todo)}", done[0] / max(1, len(todo)))
     if chunks:
-        log(f"{project}: embedding {len(todo)} changed symbols ({len(reuse)} reused)")
+        log(f"{project}: embedding {len(todo)} new or changed symbols ({len(reuse)} kept; texts embedded before, "
+            "on any branch, come from the vector cache)")
         with ThreadPoolExecutor(max(1, cfg.get("BRAIN_EMBED_PARALLEL"))) as pool:
             list(pool.map(work, chunks))
     if results:

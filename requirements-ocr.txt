@@ -1,0 +1,12 @@
+# Optional OCR fallback for pictures and scanned pages when the vision model is missing, slow or failing.
+# Installed by setup when wheels/ocr/ exists (always with --no-deps: every package is pinned here).
+rapidocr_onnxruntime==1.2.3
+onnxruntime==1.31.0
+opencv-python-headless==5.0.0.93
+pyclipper==1.4.0
+shapely==2.2.0
+PyYAML==6.0.3
+six==1.17.0
+flatbuffers==25.12.19
+protobuf==7.36.2
+packaging==26.3

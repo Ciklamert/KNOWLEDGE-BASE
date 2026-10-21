@@ -21,7 +21,11 @@ break it. A group-level hook covers many repositories with one configuration. Bo
 3. The repository is found (per-repository: by name; group-level: by normalised clone URL, http or ssh, with or
    without credentials and `.git`, TFS `/_git/` paths, namespace path, name or alias, and finally by the last two
    path parts). Unknown → 404, which the git server shows in its delivery log.
-4. Only events for the repository's `branch` count; anything else → 200 `{"ignored": "<reason>"}`.
+4. Events for the repository's tracked `branch` update it. On another branch: a deleted branch (new commit all
+   zeros) removes that branch's overlay → 200 `{"removed": "<repo>@<branch>"}`; a push to a branch with an overlay
+   re-indexes the overlay (`BRAIN_BRANCH_UPDATE_ON_PUSH`) → 202; a push or merge to one of the repository's other
+   main branches (`mains`) updates or creates its overlay → 202; anything else → 200 `{"ignored": "<reason>"}`.
+   See [10-BRANCH-DRIFT.md](10-BRANCH-DRIFT.md) §2.2.
 5. `BRAIN_WEBHOOK_EVENTS` (default `merge,push`) selects which kinds trigger an update: `merge` = merged MR/PR,
    `push` = any push to the tracked branch.
 6. An update starts at once → 202 with the job id. If the repository is already being updated, the answer says
@@ -32,11 +36,12 @@ break it. A group-level hook covers many repositories with one configuration. Bo
 
 Events handled:
 - GitLab: `object_kind: merge_request` with `action: merge` (or `state: merged`) and `target_branch` = tracked
-  branch; `object_kind: push` with `ref` = `refs/heads/<tracked branch>`. The `X-Gitlab-Event` header is also
-  understood.
+  branch (with `force_remove_source_branch`, the source branch's overlay is removed); `object_kind: push` with
+  `ref` = `refs/heads/<tracked branch>`, or `after` = `0000…0` (a deleted branch). The `X-Gitlab-Event` header is
+  also understood.
 - TFS: `git.pullrequest.merged` and `git.pullrequest.updated` with `resource.status = completed`,
   `mergeStatus = succeeded` and `targetRefName` = `refs/heads/<tracked branch>`; `git.push` with a `refUpdates`
-  entry for the tracked branch.
+  entry for the tracked branch, or entries with `newObjectId` = `0000…0` (deleted branches).
 
 For `/webhooks/repo/<name>` GitLab and TFS are recognised from the request: an `X-Gitlab-Token` or
 `X-Gitlab-Event` header or an `object_kind` field means GitLab (secret = `X-Gitlab-Token`), an `eventType` field
@@ -47,7 +52,8 @@ means TFS (secret = basic-auth password, any user name). Anything else → 400.
 2. GitLab → project → **Settings → Webhooks → Add new webhook**:
    - URL: the copied URL (`http(s)://<server>:8765/webhooks/repo/<name>`);
    - Secret token: the copied secret;
-   - Trigger: **Merge request events** and **Push events** (branch filter: the tracked branch);
+   - Trigger: **Merge request events** and **Push events** on **all branches** (so a deleted branch removes its
+     overlay at once; pushes to branches without an overlay are ignored);
    - SSL verification: as fits your certificate.
 3. **Test → Push events**. Expected: 202 (accepted) or 200 (ignored, for example a test push on another branch).
 4. Self-managed GitLab blocks webhooks to private addresses by default: *Admin → Settings → Network → Outbound
@@ -57,7 +63,7 @@ means TFS (secret = basic-auth password, any user name). Anything else → 400.
 1. AI-BRAIN: **Repositories** → the repository's row → *Copy URL* and *Copy secret*.
 2. TFS → project → **Project settings → Service hooks → + → Web Hooks**:
    - Trigger: **Pull request merge attempted** (repository = yours, target branch = the tracked branch); add a
-     second hook **Code pushed** if `push` events are wanted;
+     second hook **Code pushed** for any branch (pushes to the tracked branch, overlay updates, deleted branches);
    - URL: the copied URL;
    - Basic authentication: any user name, password = the copied secret;
    - Resource details to send: **All**.
@@ -77,7 +83,8 @@ means TFS (secret = basic-auth password, any user name). Anything else → 400.
 - `brain hook` in a developer checkout updates AI-BRAIN after every `git pull` of the tracked branch.
 Every repository is updated at least every 24 hours anyway (`BRAIN_SYNC_INTERVAL_MINUTES`, default 1440); set it
 lower (for example 10) to update more often when webhooks are not possible. An
-unchanged repository costs one fetch and a hash check.
+unchanged repository costs one fetch and a hash check. Every update also removes the overlays of branches that no
+longer exist (`git ls-remote --heads`), so overlays disappear without webhooks too.
 
 ## 7. Troubleshooting
 

@@ -58,7 +58,7 @@ value); or `set` (a set name) and `repos` (a list, or a comma-separated string).
 | `POST /api/ask` | `{"question", "target", "set", "repos", "branch", "model", "async": false}` | `answer`, `model`, `llm`, `analysis`, `sources`, `evidence` (the search the answer is based on), `steps` (tool calls), `errors`, `usage` (`calls`, `prompt_tokens`, `completion_tokens`), `ms`; with `"async": true` only `{"job"}` |
 | `POST /api/enhance` | `{"prompt", "target", "set", "repos", "branch", "model", "repo", "base_commit", "changed_files": [..], "async": false}`; any kind of request (bug fix, new feature, refactor ...) | `enhanced`, `model`, `llm`, `analysis`, `sources`, `evidence`, `steps`, `drift`, `errors`, `usage`, `ms`; or `{"job"}` |
 | `POST /api/guide` | `{"topic", "target", "set", "repos", "model", "async": true}` | `{"job"}`; the job result (or, with `"async": false`, the response) is `{guide, model, llm, architecture, analysis, sources, evidence, steps, errors, usage, ms}` |
-| `POST /api/drift` | `{"repo", "branch", "base_commit", "head_commit", "changed_files": [..]}` (`repo` required) | `tracked_branch`, `indexed_commit`, `main_head`, `base_commit`, `behind`, `main_files`, `branch_files`, `risk_files`, `facts`, `recommendations[{action, why, how, files}]`, `markdown` |
+| `POST /api/drift` | `{"repo", "branch", "base", "base_commit", "head_commit", "changed_files": [..]}` (`repo` required; `base` = the main branch the branch derives from, found when empty) | `tracked_branch` (the main compared with), `mains`, `indexed_commit`, `main_head`, `base_commit`, `behind`, `main_files`, `branch_files`, `risk_files`, `facts`, `recommendations[{action, why, how, files}]`, `markdown` |
 | `POST /api/impact` | `{"files": [..], "symbols": [..], "depth": 3}` plus the scope fields; at least files or symbols | `repos[]` (per repository: `project`, `changed`, `affected` (`symbol`, `path`, `line`, `depth`, `via`), `entry_points` (`routes`, `top_callers`), `tests`, `test_files`), `rules` (document passages that name the changed code), `errors`, `markdown`; no model call |
 
 Example:
@@ -71,11 +71,11 @@ curl -s -H "Authorization: Bearer $BRAIN_API_TOKEN" -H "Content-Type: applicatio
 
 | Method and path | Body | Returns |
 |---|---|---|
-| `GET /api/repos` | | `repos[]` (configuration without tokens, `token_set`, `remote`, `managed`, `checkout`, `sets`, own `webhook` {`url`, `secret`, `provider`, `how`}, `indexed`, `nodes`, `commit`, `indexed_at`, `error`, `vectors`, `branches`), `sets`, `file` |
+| `GET /api/repos` | | `repos[]` (configuration without tokens, `token_set`, `remote`, `managed`, `checkout`, `sets`, own `webhook` {`url`, `secret`, `provider`, `how`}, `indexed`, `nodes`, `commit`, `indexed_at`, `error`, `vectors`, `branches` (each: `branch`, `project`, `commit`, `indexed_at`, `used_at`, `expires_at`)), `sets`, `file` |
 | `PUT /api/repos` | `{"repos": [{name, provider, url, path, branch, user, token, aliases}], "sets": {"<set>": ["<repo>", ...]}}` | the validated, saved `repos.json` (`repos`, `sets`), plus `indexing` (repositories that are new or whose URL, path or branch changed: they are indexed at once on their branch) and `job` (that update, or null); webhook secrets are generated; an empty token keeps the stored one |
 | `POST /api/repos/sync` | | `{"job"}`: update and index all repositories |
 | `POST /api/repos/{name}/sync` | | `{"job", "queued"}`; starts at once; when the repository is already being updated, `job` is null, `queued` is true and that update runs once more |
-| `POST /api/repos/{name}/branches` | `{"branch"}` | `{"job"}`: index a pushed branch as an overlay |
+| `POST /api/repos/{name}/branches` | `{"branch", "base"}` (`base` optional: the main branch it derives from) | `{"job", "queued"}`: index a pushed branch as an overlay (`job` is null and `queued` true when that branch is already being indexed); removed by itself when the branch is deleted or unused for `BRAIN_BRANCH_TTL_DAYS` ([10](10-BRANCH-DRIFT.md) §2.2) |
 | `DELETE /api/repos/{name}/branches/{branch}` | | removes the overlay; the branch may contain `/` |
 
 ## Code (used by the UI, and the read / grep / glob replacements for agents without MCP)

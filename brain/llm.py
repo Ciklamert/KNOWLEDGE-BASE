@@ -71,13 +71,26 @@ def chat(messages: list[dict], model: str, timeout: float | None = None, max_tok
     return msg
 
 
-def embed(texts: list[str], timeout: float | None = None) -> list[list[float]]:
-    base = (cfg.get("BRAIN_EMBEDDING_BASE_URL") or cfg.get("BRAIN_LLM_BASE_URL")).rstrip("/")
-    key = cfg.get("BRAIN_EMBEDDING_API_KEY") or cfg.get("BRAIN_LLM_API_KEY")
-    data = _post(f"{base}/embeddings", key, {"model": cfg.get("BRAIN_EMBEDDING_MODEL"), "input": texts},
-                 timeout or cfg.get("BRAIN_LLM_TIMEOUT"))
-    rows = sorted(data.get("data", []), key=lambda d: d.get("index", 0))
-    return [r["embedding"] for r in rows]
+def embed(texts: list[str], timeout: float | None = None, cache: bool = True) -> list[list[float]]:
+    """Vectors of these texts. Texts embedded before with the same model come from the persistent cache (vcache);
+    only the others are sent to the API."""
+    from . import vcache
+    model = cfg.get("BRAIN_EMBEDDING_MODEL")
+    use = cache and vcache.enabled()
+    found = vcache.get(model, texts) if use else {}
+    todo = [i for i in range(len(texts)) if i not in found]
+    if todo:
+        base = (cfg.get("BRAIN_EMBEDDING_BASE_URL") or cfg.get("BRAIN_LLM_BASE_URL")).rstrip("/")
+        key = cfg.get("BRAIN_EMBEDDING_API_KEY") or cfg.get("BRAIN_LLM_API_KEY")
+        data = _post(f"{base}/embeddings", key, {"model": model, "input": [texts[i] for i in todo]},
+                     timeout or cfg.get("BRAIN_LLM_TIMEOUT"))
+        rows = [r["embedding"] for r in sorted(data.get("data", []), key=lambda d: d.get("index", 0))]
+        if len(rows) != len(todo):
+            raise LLMError(f"embeddings: asked for {len(todo)} vectors, got {len(rows)}")
+        if use:
+            vcache.put(model, [texts[i] for i in todo], rows)
+        found.update(zip(todo, rows))
+    return [found[i] for i in range(len(texts))]
 
 
 _models: dict = {"t": 0.0, "list": []}
@@ -113,7 +126,7 @@ def check() -> dict:
         out["chat"] = False
         out["errors"].append(f"chat: {exc}")
     try:
-        v = embed(["health check"], timeout=min(60.0, cfg.get("BRAIN_LLM_TIMEOUT")))
+        v = embed(["health check"], timeout=min(60.0, cfg.get("BRAIN_LLM_TIMEOUT")), cache=False)
         out["dim"] = len(v[0]) if v else None
         out["embedding"] = out["dim"] == cfg.get("BRAIN_EMBEDDING_DIM")
         if not out["embedding"]:
